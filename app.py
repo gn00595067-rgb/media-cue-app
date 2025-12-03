@@ -2,21 +2,19 @@ import streamlit as st
 import pandas as pd
 from datetime import timedelta, date
 import io
-import requests
 
 # ==========================================
 # 1. 系統設定 (費率卡 Rate Card)
 # ==========================================
-# 請根據實際情況調整價格
 RATE_CARD = {
-    "全家便利商店": { # 通常指音訊廣播
+    "全家便利商店": { # 通路廣播
         "全省": {"10s": 150, "15s": 200, "20s": 260},
         "北部": {"10s": 180, "15s": 240, "20s": 310},
         "中部": {"10s": 150, "15s": 200, "20s": 260},
         "南部": {"10s": 150, "15s": 200, "20s": 260},
     },
-    "全家新鮮市": { # 通常指 TV 螢幕
-        "全省": {"10s": 400, "15s": 500, "20s": 600}, # 模擬價格
+    "全家新鮮視": { # TV 螢幕 (已更正名稱)
+        "全省": {"10s": 400, "15s": 500, "20s": 600}, 
         "北部": {"10s": 450, "15s": 550, "20s": 650},
         "中部": {"10s": 400, "15s": 500, "20s": 600},
         "南部": {"10s": 400, "15s": 500, "20s": 600},
@@ -29,109 +27,28 @@ RATE_CARD = {
     }
 }
 
-# 星期幾的中文對照
 WEEKDAY_MAP = {0: "一", 1: "二", 2: "三", 3: "四", 4: "五", 5: "六", 6: "日"}
 
-st.set_page_config(page_title="媒體排程報價系統", layout="wide") # 改成寬版顯示
+st.set_page_config(page_title="媒體排程報價系統 v3.0", layout="wide")
 
 # ==========================================
-# 2. 側邊欄與上方設定 (UI)
+# 2. 核心計算函式
 # ==========================================
-st.title("📱 媒體報價系統 v2.0")
-
-# 放在 Expander 讓手機畫面不要太長
-with st.expander("🛠️ 步驟 1：設定走期與總預算", expanded=True):
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        start_date = st.date_input("開始日期", value=date.today())
-    with col2:
-        end_date = st.date_input("結束日期", value=date.today() + timedelta(days=29))
-    with col3:
-        region = st.selectbox("投放區域", ["全省", "北部", "中部", "南部"])
-        
-    total_budget = st.number_input("總預算 (未稅)", min_value=10000, value=500000, step=10000)
+def calculate_single_schedule(channel, region, sec, budget, s_date, e_date, program_name):
+    """計算單一條目(Row)的排程"""
+    if budget <= 0: return None
     
-    total_days = (end_date - start_date).days + 1
-    st.caption(f"📅 總走期：{total_days} 天 ({start_date} ~ {end_date})")
-
-# ==========================================
-# 3. 三大通路配置 (UI)
-# ==========================================
-st.divider()
-st.subheader("🛠️ 步驟 2：通路配置")
-
-# 用 Tabs 或是 Columns 來分開設定，這裡用 Columns 比較直觀
-c1, c2, c3 = st.columns(3)
-
-# --- 通路 1: 全家便利商店 ---
-with c1:
-    st.markdown("### 🏪 全家便利商店")
-    enable_fm_store = st.checkbox("啟用", value=True, key="cb_fm_s")
-    if enable_fm_store:
-        pct_fm_store = st.slider("預算佔比 %", 0, 100, 30, key="sl_fm_s")
-        sec_fm_store = st.selectbox("廣告秒數", ["10s", "15s", "20s"], index=1, key="sb_fm_s")
-        cost_fm_store = total_budget * (pct_fm_store / 100)
-        st.info(f"預算: ${int(cost_fm_store):,}")
-    else:
-        cost_fm_store = 0
-        pct_fm_store = 0
-        sec_fm_store = "15s"
-
-# --- 通路 2: 全家新鮮市 ---
-with c2:
-    st.markdown("### 📺 全家新鮮市")
-    enable_fm_fresh = st.checkbox("啟用", value=True, key="cb_fm_f")
-    if enable_fm_fresh:
-        pct_fm_fresh = st.slider("預算佔比 %", 0, 100, 30, key="sl_fm_f")
-        sec_fm_fresh = st.selectbox("廣告秒數", ["10s", "15s", "20s"], index=0, key="sb_fm_f")
-        cost_fm_fresh = total_budget * (pct_fm_fresh / 100)
-        st.info(f"預算: ${int(cost_fm_fresh):,}")
-    else:
-        cost_fm_fresh = 0
-        pct_fm_fresh = 0
-        sec_fm_fresh = "10s"
-
-# --- 通路 3: 家樂福 ---
-with c3:
-    st.markdown("### 🛒 家樂福")
-    enable_carrefour = st.checkbox("啟用", value=True, key="cb_cf")
-    if enable_carrefour:
-        # 自動計算剩餘建議值，但不強制
-        remain_pct = max(0, 100 - pct_fm_store - pct_fm_fresh)
-        pct_carrefour = st.slider("預算佔比 %", 0, 100, remain_pct, key="sl_cf")
-        sec_carrefour = st.selectbox("廣告秒數", ["10s", "15s", "20s"], index=1, key="sb_cf")
-        cost_carrefour = total_budget * (pct_carrefour / 100)
-        
-        # 檢查總和
-        total_pct = pct_fm_store + pct_fm_fresh + pct_carrefour
-        if total_pct > 100:
-            st.warning(f"⚠️ 注意：總佔比已達 {total_pct}%，超過 100%")
-        st.info(f"預算: ${int(cost_carrefour):,}")
-    else:
-        cost_carrefour = 0
-        sec_carrefour = "15s"
-
-# ==========================================
-# 4. 核心運算邏輯
-# ==========================================
-def calculate_row(channel, region, sec, budget, s_date, e_date, program_name):
-    if budget <= 0:
-        return None
-        
-    # 1. 查價
+    # 查價
     try:
         rate = RATE_CARD.get(channel, {}).get(region, {}).get(sec, 0)
     except:
         rate = 0
+    if rate == 0: return None # 防呆
     
-    # 防呆
-    if rate == 0:
-        return None
-    
-    # 2. 算總檔次
+    # 算檔次
     total_spots = int(budget / rate)
     
-    # 3. 每日分配
+    # 每日分配
     days = (e_date - s_date).days + 1
     base = total_spots // days
     remainder = total_spots % days
@@ -147,7 +64,7 @@ def calculate_row(channel, region, sec, budget, s_date, e_date, program_name):
         "Station": channel,
         "Location": region,
         "Program": program_name,
-        "Day-part": "06-24", # 預設全天
+        "Day-part": "06-24",
         "Size": sec,
         "Rate (Net)": rate,
         "Package Cost": int(budget),
@@ -155,118 +72,213 @@ def calculate_row(channel, region, sec, budget, s_date, e_date, program_name):
         "Total Spots": total_spots
     }
 
-# 收集資料
-rows = []
+# ==========================================
+# 3. UI: 基礎設定
+# ==========================================
+st.title("📱 媒體報價系統 v3.0 (Pro)")
 
-if enable_fm_store:
-    r = calculate_row("全家便利商店", region, sec_fm_store, cost_fm_store, start_date, end_date, "通路廣播")
-    if r: rows.append(r)
-
-if enable_fm_fresh:
-    r = calculate_row("全家新鮮市", region, sec_fm_fresh, cost_fm_fresh, start_date, end_date, "新鮮視TV")
-    if r: rows.append(r)
-
-if enable_carrefour:
-    r = calculate_row("家樂福", region, sec_carrefour, cost_carrefour, start_date, end_date, "家樂福聯播")
-    if r: rows.append(r)
+with st.expander("🛠️ 步驟 1：設定走期與總預算", expanded=True):
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        start_date = st.date_input("開始日期", value=date.today())
+    with col2:
+        end_date = st.date_input("結束日期", value=date.today() + timedelta(days=29))
+    with col3:
+        region = st.selectbox("投放區域", ["全省", "北部", "中部", "南部"])
+        
+    total_budget = st.number_input("總預算 (未稅)", min_value=10000, value=500000, step=10000)
+    total_days = (end_date - start_date).days + 1
+    st.caption(f"📅 總走期：{total_days} 天")
 
 # ==========================================
-# 5. 建立表格與顯示
+# 4. UI: 通路配置 (智慧連動邏輯)
 # ==========================================
-if not rows:
-    st.warning("尚未配置任何預算，請開啟上方通路開關。")
+st.divider()
+st.subheader("🛠️ 步驟 2：通路配置與配比")
+
+# 先讓用戶選擇要啟用哪些通路
+c_sel1, c_sel2, c_sel3 = st.columns(3)
+with c_sel1: enable_fm = st.checkbox("全家便利商店", value=True)
+with c_sel2: enable_fv = st.checkbox("全家新鮮視", value=True)
+with c_sel3: enable_cf = st.checkbox("家樂福", value=False) # 預設關閉一個，測試連動
+
+active_channels = []
+if enable_fm: active_channels.append("FM")
+if enable_fv: active_channels.append("FV")
+if enable_cf: active_channels.append("CF")
+active_count = len(active_channels)
+
+# 初始化變數
+pct_fm = 0
+pct_fv = 0
+pct_cf = 0
+
+# --- 智慧連動邏輯區 ---
+st.markdown("---")
+col_ui1, col_ui2, col_ui3 = st.columns(3)
+
+# 用於存放每個通路的預算結果，供下方秒數分配使用
+budget_fm = 0
+budget_fv = 0
+budget_cf = 0
+
+# 情境 A: 剛好 2 個通路 (啟動 100% 連動)
+if active_count == 2:
+    # 找出哪兩個是啟用的，將第一個設為 Slider，第二個自動計算
+    first = active_channels[0]
+    second = active_channels[1]
+    
+    # 為了 UI 美觀，我們還是渲染三個欄位，但只在對應的欄位顯示內容
+    
+    # 通路 1: 全家便利商店
+    with col_ui1:
+        if enable_fm:
+            st.markdown("### 🏪 全家便利商店")
+            if first == "FM":
+                pct_fm = st.slider("預算佔比 %", 0, 100, 50, key="slider_fm_link")
+            else:
+                # 這是第二順位，自動計算
+                pct_fm = 100 - (pct_fv if first == "FV" else pct_cf)
+                st.progress(pct_fm / 100)
+                st.write(f"自動連動佔比: **{pct_fm}%**")
+            
+            budget_fm = total_budget * (pct_fm / 100)
+            st.info(f"預算: ${int(budget_fm):,}")
+
+    # 通路 2: 全家新鮮視
+    with col_ui2:
+        if enable_fv:
+            st.markdown("### 📺 全家新鮮視")
+            if first == "FV":
+                pct_fv = st.slider("預算佔比 %", 0, 100, 50, key="slider_fv_link")
+            else:
+                # 自動計算
+                pct_fv = 100 - (pct_fm if first == "FM" else pct_cf)
+                st.progress(pct_fv / 100)
+                st.write(f"自動連動佔比: **{pct_fv}%**")
+                
+            budget_fv = total_budget * (pct_fv / 100)
+            st.info(f"預算: ${int(budget_fv):,}")
+
+    # 通路 3: 家樂福
+    with col_ui3:
+        if enable_cf:
+            st.markdown("### 🛒 家樂福")
+            if first == "CF":
+                pct_cf = st.slider("預算佔比 %", 0, 100, 50, key="slider_cf_link")
+            else:
+                # 自動計算
+                pct_cf = 100 - (pct_fm if first == "FM" else pct_fv)
+                st.progress(pct_cf / 100)
+                st.write(f"自動連動佔比: **{pct_cf}%**")
+                
+            budget_cf = total_budget * (pct_cf / 100)
+            st.info(f"預算: ${int(budget_cf):,}")
+
+# 情境 B: 1 個或 3 個通路 (手動模式 + 警示)
 else:
-    # 產生日期標頭 (含星期) e.g., "10/01 (三)"
-    date_headers = []
-    curr = start_date
-    for _ in range(total_days):
-        wd = WEEKDAY_MAP[curr.weekday()]
-        date_str = f"{curr.strftime('%m/%d')} ({wd})"
-        date_headers.append(date_str)
-        curr += timedelta(days=1)
-
-    # 轉成 DataFrame
-    final_data = []
-    for r in rows:
-        base_info = {
-            "Station": r["Station"],
-            "Location": r["Location"],
-            "Program": r["Program"],
-            "Day-part": r["Day-part"],
-            "Size": r["Size"],
-            "Rate (Net)": r["Rate (Net)"],
-            "Package Cost": r["Package Cost"],
-        }
-        for idx, spots in enumerate(r["Schedule"]):
-            col_name = date_headers[idx]
-            base_info[col_name] = spots
-        base_info["總檔次"] = r["Total Spots"]
-        final_data.append(base_info)
-
-    df = pd.DataFrame(final_data)
-
-    # 計算 Total
-    sum_row = df.sum(numeric_only=True)
-    sum_row["Station"] = "Total"
-    sum_row["Rate (Net)"] = ""
-    sum_df = pd.DataFrame([sum_row])
-    df_display = pd.concat([df, sum_df], ignore_index=True)
-    df_display = df_display.fillna("")
-
-    # 顯示
-    st.divider()
-    st.subheader("📊 試算結果 Cue 表")
-    st.dataframe(df_display, use_container_width=True)
-
-    # ==========================================
-    # 6. Excel 下載 (修復版)
-    # ==========================================
-    # 使用 BytesIO 確保記憶體寫入
-    output = io.BytesIO()
+    # 全家便利商店
+    with col_ui1:
+        if enable_fm:
+            st.markdown("### 🏪 全家便利商店")
+            pct_fm = st.slider("預算佔比 %", 0, 100, 50 if active_count==1 else 33, key="slider_fm_manual")
+            budget_fm = total_budget * (pct_fm / 100)
+            st.info(f"預算: ${int(budget_fm):,}")
     
-    # 建立 Excel Writer
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_display.to_excel(writer, sheet_name='Cue表', index=False)
-        
-        # 取得 workbook 和 worksheet 物件來進行格式設定
-        workbook = writer.book
-        worksheet = writer.sheets['Cue表']
-        
-        # 設定格式
-        header_format = workbook.add_format({
-            'bold': True,
-            'text_wrap': True,
-            'valign': 'top',
-            'fg_color': '#D7E4BC',
-            'border': 1
-        })
-        
-        # 設定欄寬
-        worksheet.set_column(0, 0, 15) # Station
-        worksheet.set_column(1, 4, 10) # Info columns
-        worksheet.set_column(5, 6, 12) # Price columns
-        worksheet.set_column(7, len(df_display.columns)-1, 5) # Date columns 窄一點
-        
-    writer.close()
+    # 全家新鮮視
+    with col_ui2:
+        if enable_fv:
+            st.markdown("### 📺 全家新鮮視")
+            pct_fv = st.slider("預算佔比 %", 0, 100, 50 if active_count==1 else 33, key="slider_fv_manual")
+            budget_fv = total_budget * (pct_fv / 100)
+            st.info(f"預算: ${int(budget_fv):,}")
+
+    # 家樂福
+    with col_ui3:
+        if enable_cf:
+            st.markdown("### 🛒 家樂福")
+            pct_cf = st.slider("預算佔比 %", 0, 100, 50 if active_count==1 else 34, key="slider_cf_manual")
+            budget_cf = total_budget * (pct_cf / 100)
+            st.info(f"預算: ${int(budget_cf):,}")
+
+    # 檢查總和
+    total_pct = pct_fm + pct_fv + pct_cf
+    if total_pct != 100:
+        if total_pct > 100:
+            st.error(f"⚠️ 總佔比 {total_pct}% (超過 100%)，請調整。")
+        else:
+            st.warning(f"⚠️ 總佔比 {total_pct}% (不足 100%)，剩餘 {100-total_pct}% 未分配。")
+
+
+# ==========================================
+# 5. UI: 秒數混搭細節 (每個通路都可以任意混搭)
+# ==========================================
+rows = [] # 收集最後要產出的資料
+
+def render_duration_mix_ui(channel_name, channel_key, total_channel_budget, program_name):
+    """
+    渲染通用的秒數混合介面
+    channel_key: 用來區分不同通路的元件 ID
+    """
+    if total_channel_budget <= 0:
+        return []
     
-    # 重要的修復：將指標移回開頭，不然下載的檔案會是空的
-    output.seek(0)
+    generated_rows = []
     
-    col_d1, col_d2 = st.columns(2)
-    with col_d1:
-        st.download_button(
-            label="📥 下載 Excel 報表",
-            data=output,
-            file_name=f"MediaSchedule_{start_date}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    # 混搭開關
+    is_mix = st.checkbox(f"開啟 {channel_name} 秒數混搭", key=f"mix_{channel_key}")
+    
+    if not is_mix:
+        # 單一秒數模式
+        sec = st.selectbox("選擇秒數", ["10s", "15s", "20s"], index=1, key=f"sec_s_{channel_key}")
+        # 產生 1 筆資料 (100% 預算)
+        r = calculate_single_schedule(channel_name, region, sec, total_channel_budget, start_date, end_date, program_name)
+        if r: generated_rows.append(r)
         
-    # ==========================================
-    # 7. 上傳 Ragic
-    # ==========================================
-    with col_d2:
-        with st.popover("☁️ 上傳至 Ragic"):
-            ragic_url = st.text_input("API URL", placeholder="https://www.ragic.com/...")
-            ragic_key = st.text_input("API Key", type="password")
-            if st.button("確認上傳"):
-                st.success("資料已送出 (模擬)")
+    else:
+        # 混搭模式 (Slots)
+        st.markdown(f"**{channel_name} 組合配置:**")
+        
+        # Slot 1
+        c_mix1, c_mix2 = st.columns([1, 1])
+        with c_mix1:
+            sec_1 = st.selectbox(f"組合 1 秒數", ["10s", "15s", "20s"], index=0, key=f"sec_m1_{channel_key}")
+        with c_mix2:
+            pct_1 = st.number_input(f"組合 1 佔該通路 %", 0, 100, 50, key=f"pct_m1_{channel_key}")
+            
+        # Slot 2 (自動計算剩餘)
+        pct_2 = 100 - pct_1
+        c_mix3, c_mix4 = st.columns([1, 1])
+        with c_mix3:
+            sec_2 = st.selectbox(f"組合 2 秒數", ["10s", "15s", "20s"], index=2, key=f"sec_m2_{channel_key}")
+        with c_mix4:
+            st.write(f"組合 2 佔該通路 %")
+            st.caption(f"**{pct_2}%** (自動計算)")
+        
+        # 計算 Slot 1
+        budget_1 = total_channel_budget * (pct_1 / 100)
+        r1 = calculate_single_schedule(channel_name, region, sec_1, budget_1, start_date, end_date, program_name)
+        if r1: generated_rows.append(r1)
+        
+        # 計算 Slot 2
+        budget_2 = total_channel_budget * (pct_2 / 100)
+        r2 = calculate_single_schedule(channel_name, region, sec_2, budget_2, start_date, end_date, program_name)
+        if r2: generated_rows.append(r2)
+        
+    return generated_rows
+
+
+# 依序渲染下方的詳細設定區
+st.markdown("---")
+
+# 全家便利商店 詳細設定
+if enable_fm:
+    with col_ui1:
+        st.caption("🔻 秒數設定")
+        new_rows = render_duration_mix_ui("全家便利商店", "fm", budget_fm, "通路廣播")
+        rows.extend(new_rows)
+
+# 全家新鮮視 詳細設定
+if enable_fv:
+    with col_ui2:
+        st.caption("🔻 秒數
