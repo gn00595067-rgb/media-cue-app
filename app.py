@@ -10,16 +10,16 @@ import json
 # ==========================================
 RAGIC_CONFIG = {
     "client_name": 10012,
-    "start_date": 10003,
-    "end_date": 10004,
-    "region": 10005,
-    "total_budget": 10006,
+    "start_date": 10013,
+    "end_date": 10014,
+    "region": 10015,
+    "total_budget": 10016,
     # 子表格 ID
-    "sub_station": 20001,
-    "sub_sec": 20002,
-    "sub_rate": 20003,
-    "sub_cost": 20004,
-    "sub_spots": 20005,
+    "sub_station": 10017,
+    "sub_sec": 10018,
+    "sub_rate": 10019,
+    "sub_cost": 10020,
+    "sub_spots": 10021,
 }
 
 # ==========================================
