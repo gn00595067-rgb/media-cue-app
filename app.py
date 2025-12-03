@@ -148,8 +148,8 @@ def render_mix_ui_v2(channel_name, key_id, budget, region, start_date, end_date,
 # ==========================================
 # 2. UI 頁面開始
 # ==========================================
-st.set_page_config(page_title="媒體排程系統 v9.0", layout="wide")
-st.title("📱 媒體報價系統 v9.0")
+st.set_page_config(page_title="媒體排程系統 Demo", layout="wide")
+st.title("📱 媒體報價系統 Demo")
 
 with st.expander("🛠️ 步驟 1：基礎資訊", expanded=True):
     client_name = st.text_input("客戶名稱", placeholder="例如：台灣讀廣")
