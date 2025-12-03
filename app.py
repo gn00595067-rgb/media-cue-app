@@ -9,6 +9,7 @@ import json
 # 0. Ragic 設定區 (請填入真實 ID)
 # ==========================================
 RAGIC_CONFIG = {
+    "client_name": 10012,
     "start_date": 10003,
     "end_date": 10004,
     "region": 10005,
@@ -367,6 +368,7 @@ else:
                 else:
                     # 1. 表頭
                     payload = {
+                        RAGIC_CONFIG["client_name"]: client_name,
                         RAGIC_CONFIG["start_date"]: str(start_date),
                         RAGIC_CONFIG["end_date"]: str(end_date),
                         RAGIC_CONFIG["region"]: region,
