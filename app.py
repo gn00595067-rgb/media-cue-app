@@ -6,22 +6,26 @@ import requests
 import json
 
 # ==========================================
-# 0. Ragic 設定 (請填入真實 ID)
+# 0. Ragic 設定 (⚠️ 請務必改回您的真實 ID)
 # ==========================================
 RAGIC_CONFIG = {
-    "client_name": 10012,
-    "start_date": 10013,
-    "end_date": 10014,
-    "region": 10015,
-    "total_budget": 10016,
-    "sub_station": 10017,
-    "sub_sec": 10018,
-    "sub_rate": 10019,
-    "sub_cost": 10020,
-    "sub_spots": 10021,
+    # 表頭
+    "client_name": 10012,   # 請填真實 ID
+    "start_date": 10013,    # 請填真實 ID
+    "end_date": 10014,      # 請填真實 ID
+    "region": 10015,        # 請填真實 ID
+    "total_budget": 10016,  # 請填真實 ID
+    
+    # 子表格 (請填真實 ID)
+    "sub_station": 10017,   # 通路名稱
+    "sub_sec": 10018,       # 秒數
+    "sub_rate": 10019,      # 單價
+    "sub_cost": 10020,      # 預算
+    "sub_spots": 10021,     # 檔次
 }
 
-# 請在此填入子表格的 Root ID (通常是子表格最左邊欄位的 ID)
+# ⚠️ 關鍵設定：請填入子表格的 Root ID
+# 如果 10017 失敗，請試試看填入 10018 或 10019 試試看！
 SUBTABLE_ROOT_ID = "10017" 
 
 # ==========================================
@@ -139,15 +143,14 @@ def render_mix_ui_v2(channel_name, key_id, budget, region, start_date, end_date,
     return result_rows
 
 # ==========================================
-# 2. UI 頁面開始
+# MAIN APP
 # ==========================================
-st.set_page_config(page_title="媒體排程系統", layout="wide")
-st.title("📱 媒體報價系統 v7.0 (Fix)")
+st.set_page_config(page_title="媒體排程系統 v7.2", layout="wide")
+st.title("📱 媒體報價系統 v7.2 (Debug)")
 
-# 步驟 1
+# STEP 1
 with st.expander("🛠️ 步驟 1：基礎資訊", expanded=True):
     client_name = st.text_input("客戶名稱", placeholder="例如：台灣讀廣")
-    
     st.divider()
     c1, c2, c3 = st.columns(3)
     with c1: start_date = st.date_input("開始日期", value=date.today())
@@ -156,7 +159,7 @@ with st.expander("🛠️ 步驟 1：基礎資訊", expanded=True):
     total_budget = st.number_input("總預算 (未稅)", value=500000, step=10000)
     total_days = (end_date - start_date).days + 1
 
-# 步驟 2
+# STEP 2
 st.divider()
 st.subheader("🛠️ 步驟 2：通路配置")
 sel_c1, sel_c2, sel_c3 = st.columns(3)
@@ -238,14 +241,12 @@ if enable_cf: current_total += pct_cf
 if active_count != 2 and current_total != 100:
     st.warning(f"⚠️ 目前通路總佔比 {current_total}% (建議調整為 100%)")
 
-# ==========================================
-# 3. 產出與上傳區
-# ==========================================
+# STEP 3: OUTPUT
 if not all_schedule_rows:
     st.divider()
     st.warning("⚠️ 請至少啟用一個通路")
 else:
-    # 建立 DataFrame
+    # Build DataFrame
     date_headers = []
     curr = start_date
     for _ in range(total_days):
@@ -285,7 +286,7 @@ else:
     st.subheader("📊 試算結果 Cue 表")
     st.dataframe(df_display, use_container_width=True)
 
-    # 下載區塊
+    # EXCEL EXPORT
     st.markdown("### 📥 匯出資料")
     col_dl, col_ragic = st.columns([1, 1])
     
@@ -333,7 +334,7 @@ else:
         )
         st.caption("手機請用瀏覽器開啟以確保下載成功")
 
-    # Ragic 上傳區塊
+    # RAGIC UPLOAD
     with col_ragic:
         with st.popover("☁️ 上傳至 Ragic"):
             st.markdown("#### 系統連線設定")
@@ -363,11 +364,14 @@ else:
                             RAGIC_CONFIG["sub_spots"]: r["Total Spots"]
                         }
                     
-                    # ⚠️ 使用最上方設定的 Root ID
                     subtable_key = f"_subtable_{SUBTABLE_ROOT_ID}"
                     payload[subtable_key] = subtable_data
                     
-                    st.info("正在連線...")
+                    # === 除錯訊息 (會印出 JSON) ===
+                    st.info("連線中... 傳送的資料如下:")
+                    st.json(payload)
+                    # ============================
+
                     try:
                         if "?api" not in ragic_url:
                             ragic_url += "?api=true" if "?" not in ragic_url else "&api=true"
@@ -379,7 +383,6 @@ else:
                                 st.success(f"✅ 上傳成功！ID: {res_json.get('ragicId')}")
                             else:
                                 st.error(f"上傳失敗: {res_json.get('msg')}")
-                                st.json(res_json)
                         else:
                             st.error(f"連線錯誤: {resp.status_code}")
                             st.write(resp.text)
