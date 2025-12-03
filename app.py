@@ -6,19 +6,20 @@ import requests
 import json
 
 # ==========================================
-# 0. Ragic 設定 (請填入真實 ID)
+# 0. 系統預設值 (已內建您的 Ragic 資訊)
 # ==========================================
+DEFAULT_RAGIC_URL = "https://ap15.ragic.com/liuskyo/media-quotation/2"
+DEFAULT_API_KEY = "L04zZGhrVmtTV3pqN1VLbUpnOFZMZ0NvaEJ6RlRUd1pjOEtDZ3lmSXl1RW8wcUJPZ2pSbWdZYmpHQUp2R1VJOA=="
+
+# Ragic 欄位 ID 設定 (請確認這些 ID 與您 Ragic 表單一致)
 RAGIC_CONFIG = {
-    # 表頭欄位
     "client_name": 10012,
     "start_date": 10013,
     "end_date": 10014,
     "region": 10015,
     "total_budget": 10016,
+    "file_upload": 10022, # 檔案上傳欄位 ID
     
-    # [新功能] 檔案上傳欄位 (請去 Ragic 新增一個「檔案上傳」欄位並填入 ID)
-    "file_upload": 10022, 
-
     # 子表格欄位
     "sub_station": 10017,
     "sub_sec": 10018,
@@ -27,7 +28,7 @@ RAGIC_CONFIG = {
     "sub_spots": 10021,
 }
 
-# 子表格 Root ID (您剛剛辛苦找到的那個數字)
+# 子表格 Root ID
 SUBTABLE_ROOT_ID = "1000076"
 
 # ==========================================
@@ -147,8 +148,8 @@ def render_mix_ui_v2(channel_name, key_id, budget, region, start_date, end_date,
 # ==========================================
 # 2. UI 頁面開始
 # ==========================================
-st.set_page_config(page_title="媒體排程系統 v8.0", layout="wide")
-st.title("📱 媒體報價系統 v8.0")
+st.set_page_config(page_title="媒體排程系統 v9.0", layout="wide")
+st.title("📱 媒體報價系統 v9.0")
 
 with st.expander("🛠️ 步驟 1：基礎資訊", expanded=True):
     client_name = st.text_input("客戶名稱", placeholder="例如：台灣讀廣")
@@ -284,17 +285,28 @@ else:
 
     st.divider()
     st.subheader("📊 試算結果 Cue 表")
+
+    # ==========================
+    # 新增：網頁版資訊顯示區
+    # ==========================
+    str_product = " ".join(sorted(used_secs))
+    str_period = f"{start_date.strftime('%Y.%m.%d')} - {end_date.strftime('%Y.%m.%d')}"
+    str_medium = " ".join(sorted(used_channels))
+    if not client_name: client_name = "(未填寫)"
+
+    st.info(f"""
+    **客戶名稱：** {client_name}  
+    **Product：** {str_product}  
+    **Period：** {str_period}  
+    **Medium：** {str_medium}
+    """)
+    # ==========================
+
     st.dataframe(df_display, use_container_width=True)
 
     # ---------------------------
     # 準備 Excel 資料 (共用)
     # ---------------------------
-    str_product = " ".join(sorted(used_secs))
-    str_period = f"{start_date.strftime('%Y.%m.%d')} - {end_date.strftime('%Y.%m.%d')}"
-    str_medium = " ".join(sorted(used_channels))
-    if not client_name: client_name = ""
-
-    # 使用函式產生 Excel Bytes
     def generate_excel_bytes():
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -344,19 +356,20 @@ else:
         st.caption("手機請用瀏覽器開啟以確保下載成功")
 
     # ---------------------------
-    # Ragic 上傳區塊 (含附件上傳)
+    # Ragic 上傳區塊
     # ---------------------------
     with col_ragic:
         with st.popover("☁️ 上傳至 Ragic"):
             st.markdown("#### 系統連線設定")
-            ragic_url = st.text_input("API URL", placeholder="https://www.ragic.com/...")
-            ragic_key = st.text_input("API Key", type="password")
+            
+            # 使用預設值填入
+            ragic_url = st.text_input("API URL", value=DEFAULT_RAGIC_URL)
+            ragic_key = st.text_input("API Key", value=DEFAULT_API_KEY, type="password")
             
             if st.button("確認上傳", type="primary", use_container_width=True):
                 if not ragic_url or not ragic_key:
                     st.error("請輸入 API URL 與 Key")
                 else:
-                    # 1. 準備表頭資料
                     payload = {
                         RAGIC_CONFIG["client_name"]: client_name,
                         RAGIC_CONFIG["start_date"]: str(start_date),
@@ -365,7 +378,6 @@ else:
                         RAGIC_CONFIG["total_budget"]: total_budget,
                     }
                     
-                    # 2. 準備子表格
                     subtable_data = {}
                     for idx, r in enumerate(all_schedule_rows):
                         row_key = str((idx + 1) * -1)
@@ -380,10 +392,8 @@ else:
                     subtable_key = f"_subtable_{SUBTABLE_ROOT_ID}"
                     payload[subtable_key] = subtable_data
                     
-                    # 3. 發送資料 (建立資料)
                     st.info("步驟 1/2: 建立報價單資料...")
                     try:
-                        # 處理 API URL
                         api_url = ragic_url
                         if "?api" not in api_url:
                             api_url += "?api=true" if "?" not in api_url else "&api=true"
@@ -400,25 +410,15 @@ else:
                                 ragic_id = res_json.get('ragicId')
                                 st.success(f"✅ 資料建立成功！(ID: {ragic_id})")
                                 
-                                # 4. 上傳 Excel 附件 (Step 2)
                                 st.info("步驟 2/2: 上傳 Excel 附件...")
-                                
-                                # 重新產生一個乾淨的 file stream
                                 upload_file_bytes = generate_excel_bytes()
                                 upload_filename = f"CueSheet_{client_name}.xlsx"
                                 
-                                # Ragic 上傳檔案的 URL 格式： .../表單ID/資料ID?api=true
-                                # 我們需要解析 user 輸入的 url
-                                # 輸入: https://www.ragic.com/.../2
-                                # 目標: https://www.ragic.com/.../2/15(ragicId)?api=true
-                                
-                                base_url = ragic_url.split('?')[0] # 去掉參數
+                                base_url = ragic_url.split('?')[0]
                                 if base_url.endswith('/'): base_url = base_url[:-1]
                                 upload_url = f"{base_url}/{ragic_id}?api=true"
                                 
-                                # 準備檔案
                                 files = {
-                                    # 注意：這裡的 key 必須是檔案上傳欄位的 ID
                                     str(RAGIC_CONFIG["file_upload"]): (upload_filename, upload_file_bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
                                 }
                                 
@@ -431,7 +431,7 @@ else:
                                 if resp_upload.status_code == 200:
                                     st.success("🎉 附件上傳成功！全數完成。")
                                 else:
-                                    st.warning(f"附件上傳失敗 (資料已建立，但檔案未掛上): {resp_upload.text}")
+                                    st.warning(f"附件上傳失敗: {resp_upload.text}")
                                 
                             else:
                                 st.error(f"上傳失敗: {res_json.get('msg')}")
