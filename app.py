@@ -373,10 +373,6 @@ else:
                         RAGIC_CONFIG["end_date"]: str(end_date),
                         RAGIC_CONFIG["region"]: region,
                         RAGIC_CONFIG["total_budget"]: total_budget,
-                        # 建議您在 Ragic 新增這三個欄位來接收這些資訊
-                        # "100xx": client_name, 
-                        # "100xx": str_product,
-                        # "100xx": str_medium,
                     }
                     
                     # 2. 子表格
@@ -391,6 +387,7 @@ else:
                             RAGIC_CONFIG["sub_spots"]: r["Total Spots"]
                         }
                     
+                    # 注意：這裡假設子表格 Key 是 _subtable_ + 你的子表格第一個欄位 ID
                     subtable_key = f"_subtable_{RAGIC_CONFIG['sub_station']}" 
                     payload[subtable_key] = subtable_data
                     
