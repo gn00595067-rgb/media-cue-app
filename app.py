@@ -30,10 +30,10 @@ REGIONS_ORDER = ["北區", "桃竹苗", "中區", "雲嘉南", "高屏", "東區
 DURATIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
 
 # 價格資料庫 (依據 2026 企頻報價)
+# 格式: [List Price (牌價), Net Price (實收價)]
 PRICING_DB = {
     "全家廣播": {
         "Std_Spots": 480, # 基準檔次 480
-        # 格式: [List Price, Net Price]
         "全省": [400000, 320000], 
         "北區": [250000, 200000], "桃竹苗": [150000, 120000],
         "中區": [150000, 120000], "雲嘉南": [100000, 80000], 
@@ -47,9 +47,10 @@ PRICING_DB = {
         "高屏": [75000, 60000], "東區": [45000, 36000]
     },
     "家樂福": {
-        # 家樂福特殊：直接定義 Net Unit
-        "量販_全省": {"List": 310000, "Net_Unit": 595},
-        "超市_全省": {"List": 100000, "Net_Unit": 111}
+        # 家樂福特殊：直接定義 Unit Price
+        # List Unit (推估牌價), Net Unit (實收單價)
+        "量販_全省": {"List": 310000, "Net_Unit": 595, "List_Unit": 850}, # 假設牌價單價較高
+        "超市_全省": {"List": 100000, "Net_Unit": 111, "List_Unit": 160}
     }
 }
 
@@ -81,7 +82,7 @@ def calculate_schedule(total_spots, days):
 # ==========================================
 
 st.set_page_config(layout="wide", page_title="Cue Sheet Generator Final")
-st.title("📺 媒體 Cue 表生成器 (金額計算修正版)")
+st.title("📺 媒體 Cue 表生成器 (業務專用版)")
 
 # --- 1. 基本資料 (移至主畫面) ---
 with st.container():
@@ -184,12 +185,15 @@ if fv_data: config_media["新鮮視"] = fv_data
 if cf_data: config_media["家樂福"] = cf_data
 
 # ==========================================
-# 3. 計算邏輯 (核心修正：正確使用 Std_Spots 和 Net Price)
+# 3. 計算邏輯 (核心修正：正確計算 List Price 與 Net Price)
 # ==========================================
 
 final_rows = []
 all_secs = set()
 all_media = set()
+
+# 用來統計「牌價總值」供折扣計算
+total_list_value_accum = 0
 
 if sum(m["share"] for m in config_media.values()) > 0:
     for m_type, cfg in config_media.items():
@@ -205,16 +209,23 @@ if sum(m["share"] for m in config_media.values()) > 0:
             
             if m_type in ["全家廣播", "新鮮視"]:
                 db = PRICING_DB[m_type]
-                std_spots = db["Std_Spots"] # 動態取得 480 或 504
+                std_spots = db["Std_Spots"] 
                 
                 calc_regions = ["全省"] if cfg["is_national"] else cfg["regions"]
                 display_regions = REGIONS_ORDER if cfg["is_national"] else cfg["regions"]
                 
                 combined_unit_net = 0
+                combined_unit_list = 0 # 新增：計算牌價單價
+                
                 for reg in calc_regions:
-                    # 使用 Net Price (index 1) 計算 unit_net
+                    # Index 0: List Price, Index 1: Net Price
+                    list_price_total = db[reg][0]
                     net_price_total = db[reg][1]
+                    
+                    unit_list = (list_price_total / std_spots) * discount
                     unit_net = (net_price_total / std_spots) * discount
+                    
+                    combined_unit_list += unit_list
                     combined_unit_net += unit_net
                 
                 if combined_unit_net == 0: continue
@@ -225,17 +236,16 @@ if sum(m["share"] for m in config_media.values()) > 0:
                 
                 daily_sch = calculate_schedule(target_spots, days_count)
                 
+                # 累積牌價總值 (List Value) = 牌價單價 * 總檔次
+                total_list_value_accum += (combined_unit_list * target_spots)
+                
                 pkg_cost_total = 0
                 if cfg["is_national"]:
-                    # 使用 Net Price (index 1) 計算打包總價
                     nat_net_total = db["全省"][1] 
-                    mult = 1.1 if target_spots < 720 else 1.0 # 這裡的 720 是判斷是否加價的門檻，維持不變或需確認
+                    mult = 1.1 if target_spots < 720 else 1.0 
                     pkg_cost_total = (nat_net_total / std_spots) * target_spots * discount * mult
 
                 for reg in display_regions:
-                    # 使用 Net Price (index 1) 計算各區域顯示金額
-                    # 如果是全省打包，這裡算出的是該區域分攤的 Net
-                    # 如果是區域購買，這裡算出的就是該區域的 Net
                     reg_net_total = db.get(reg, [0,0])[1] if cfg["is_national"] else db[reg][1]
                     rate_val = int(round((reg_net_total / std_spots) * target_spots * discount))
                     
@@ -245,9 +255,6 @@ if sum(m["share"] for m in config_media.values()) > 0:
                     prog_name = STORE_COUNTS.get(reg, reg)
                     if m_type == "新鮮視": prog_name = STORE_COUNTS.get(f"新鮮視_{reg}", reg)
                     
-                    # 顯示邏輯：
-                    # 全省打包 -> 顯示全省總價 (pkg_val_if_nat)
-                    # 區域購買 -> 顯示該區域價 (rate_val)
                     if cfg["is_national"]:
                          pkg_display_val = pkg_val_if_nat
                     else:
@@ -270,7 +277,13 @@ if sum(m["share"] for m in config_media.values()) > 0:
                 db = PRICING_DB["家樂福"]
                 unit_hyp = db["量販_全省"]["Net_Unit"] * discount
                 unit_sup = db["超市_全省"]["Net_Unit"] * discount
+                
+                # 牌價單價 (List Unit)
+                list_hyp = db["量販_全省"]["List_Unit"] * discount
+                list_sup = db["超市_全省"]["List_Unit"] * discount
+                
                 combined = unit_hyp + unit_sup
+                combined_list = list_hyp + list_sup
                 
                 target_spots = math.ceil(sec_budget / combined)
                 if target_spots % 2 != 0: target_spots += 1
@@ -278,9 +291,9 @@ if sum(m["share"] for m in config_media.values()) > 0:
 
                 sch = calculate_schedule(target_spots, days_count)
                 
-                # 家樂福 Rate Net 顯示邏輯：List Price / 720 (若維持原邏輯)
-                # 若要改成 Net，則直接用 Net Unit * spots
-                # 這裡假設 rate (Net) 欄位顯示 List 換算，Package-cost 顯示 Net
+                # 累積牌價總值
+                total_list_value_accum += (combined_list * target_spots)
+
                 rate_hyp = int(round((db["量販_全省"]["List"]/720.0)*target_spots*discount))
                 rate_sup = int(round((db["超市_全省"]["List"]/720.0)*target_spots*discount))
                 
@@ -314,7 +327,10 @@ media_total = sum(r["pkg_display_val"] for r in final_rows if not r['is_pkg_memb
 prod_cost = 10000
 vat = int(round((media_total + prod_cost) * 0.05))
 grand_total = media_total + prod_cost + vat
-discount_ratio_str = f"{(total_budget_input / grand_total * 100):.1f}%" if grand_total > 0 else "N/A"
+
+# 折扣率計算： 預算 / 牌價總值
+discount_ratio_val = (total_budget_input / total_list_value_accum * 100) if total_list_value_accum > 0 else 0
+discount_ratio_str = f"{discount_ratio_val:.1f}% (約 {discount_ratio_val/10:.1f} 折)"
 
 # ==========================================
 # 4. 生成 HTML 預覽
@@ -366,16 +382,12 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
             tr += f"<td>{r_data['seconds']}秒</td>"
             tr += f"<td class='align-right'>{r_data['rate_net']:,}</td>"
             
-            # 【HTML 顯示邏輯修正】
             if row['is_pkg_start']:
-                # 是打包組的第一列 (顯示打包價)
                 if k == 0:
                     tr += f"<td rowspan='{group_size}' class='align-right'>{row['pkg_display_val']:,}</td>"
             elif row['is_pkg_member']:
-                # 是打包組的其他列 (不顯示，被 rowspan 蓋過)
                 pass
             else:
-                # 獨立購買 (區域或家樂福)，顯示個別價格
                 val = r_data['pkg_display_val']
                 val_str = f"{val:,}"
                 tr += f"<td class='align-right'>{val_str}</td>"
@@ -390,7 +402,6 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
     
     total_rate_display = sum(r['rate_net'] for r in rows)
 
-    # CSS 保持高對比 + 不透明
     css_style = """
     <style>
         .preview-table {
@@ -611,14 +622,21 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, totals_data):
     return output
 
 # ==========================================
-# 5. 結果顯示與下載
+# 5. 結果顯示與下載 (新增內部參考區)
 # ==========================================
 
 st.markdown("### 3. 計算結果摘要")
 m1, m2, m3 = st.columns(3)
-m1.metric("客戶預算", f"{total_budget_input:,}")
-m2.metric("Cue表總金額 (含稅)", f"{grand_total:,}", delta=f"差異 +{grand_total - total_budget_input:,}")
-m3.metric("預算/表價比 (折扣率)", discount_ratio_str)
+m1.metric("客戶預算 (未稅)", f"{total_budget_input:,}")
+# 顯示折扣率 (未稅預算 / 總牌價)
+m2.metric("預算折扣率", discount_ratio_str, help="計算公式：總預算 / 媒體總牌價 (未稅)")
+m3.metric("系統實算總額 (未稅)", f"{media_total:,}", delta=f"差異 +{media_total - total_budget_input:,}", help="因檔次取偶數，通常略高於預算")
+
+# 新增：隱藏式內部資訊
+with st.expander("👁️‍🗨️ 查看業務內部參考資訊 (不會印在報表上)"):
+    st.write(f"**媒體總牌價 (List Total):** ${total_list_value_accum:,.0f}")
+    st.write(f"**系統實算總額 (Net Total):** ${media_total:,.0f}")
+    st.write(f"**預算差異:** ${media_total - total_budget_input:,.0f}")
 
 st.markdown("### 4. Cue 表網頁預覽")
 
