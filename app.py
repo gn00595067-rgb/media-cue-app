@@ -108,41 +108,81 @@ st.markdown("""
     footer {visibility: hidden;}
     .stProgress > div > div > div > div { background-color: #ff4b4b; }
     
-    /* 預覽表格 CSS - 加強配色與邊框 */
+    /* === 手機版表格視覺優化核心區 === */
     .preview-table {
         width: 100%;
-        border-collapse: collapse;
-        font-family: "Arial", "Microsoft JhengHei", sans-serif;
-        font-size: 13px; /* 字體稍微加大 */
-        color: #000;
-        border: 2px solid #333; 
+        border-collapse: collapse; /* 讓邊框合併，不留白 */
+        font-family: "Microsoft JhengHei", "Arial", sans-serif;
+        font-size: 14px; /* 字體加大方便閱讀 */
+        color: #333;
+        background-color: white;
     }
+    
+    /* 儲存格設定 */
     .preview-table th, .preview-table td {
-        border: 1px solid #666 !important;
-        padding: 8px;
+        border: 1px solid #999 !important; /* 格線顏色加深 */
+        padding: 10px 6px; /* 增加間距，手指比較好點 */
         text-align: center;
+        vertical-align: middle;
     }
-    /* 表頭：深藍色白字 */
-    .header-blue { background-color: #4472C4; color: white; font-weight: bold; }
-    /* 週末：暖黃色 */
-    .header-yellow { background-color: #FFD966; font-weight: bold; }
-    /* 檔次欄位：淡黃色 */
-    .cell-yellow { background-color: #FFF2CC; font-weight: bold; }
-    /* 總計列：淺綠色 */
-    .row-total { background-color: #E2EFDA; font-weight: bold; }
-    /* Grand Total：深綠色白字 */
-    .row-grand-total { background-color: #548235; color: white; font-weight: bold; }
+
+    /* 表頭：亮眼深藍底 + 白字 */
+    .header-blue { 
+        background-color: #2c3e50 !important; 
+        color: white !important; 
+        font-weight: bold; 
+        font-size: 14px;
+        white-space: nowrap; /* 不自動換行 */
+    }
+
+    /* 週末：暖黃色底 (區隔平日) */
+    .header-yellow { 
+        background-color: #f1c40f !important; 
+        color: #333 !important;
+        font-weight: bold; 
+    }
+
+    /* 斑馬紋：偶數行顯示淺灰色底，讓橫向閱讀不跑偏 */
+    tr:nth-child(even) {
+        background-color: #f8f9fa; 
+    }
+    
+    /* 滑鼠滑過/手指點擊時變色 */
+    tr:hover {
+        background-color: #e8f4f8 !important;
+    }
+
+    /* 檔次欄位：淡黃色突顯 */
+    .cell-yellow { 
+        background-color: #fff3cd !important; 
+        font-weight: bold; 
+        color: #856404;
+    }
+
+    /* 總計列：淺綠色底，強調金額 */
+    .row-total { 
+        background-color: #d4edda !important; 
+        font-weight: bold; 
+        color: #155724;
+    }
+
+    /* Grand Total：深綠色底 + 白字 */
+    .row-grand-total { 
+        background-color: #28a745 !important; 
+        color: white !important; 
+        font-weight: bold; 
+        font-size: 16px;
+    }
     
     .align-left { text-align: left !important; }
     .align-right { text-align: right !important; }
     
     /* 輸入區塊樣式 */
     .stBlock-container { padding-top: 1rem; }
-    .input-section { background-color: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #ddd; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📺 媒體 Cue 表生成器 (手機友善版)")
+st.title("📺 媒體 Cue 表生成器 (高對比色彩版)")
 
 # --- 1. 基本資料 (移至主畫面) ---
 with st.container():
@@ -196,7 +236,7 @@ with col_m2:
     fv_act = st.checkbox("開啟", value=True, key="fv_act")
     fv_data = None
     if fv_act:
-        is_nat = st.checkbox("全省聯播 ", value=False, key="fv_nat") # Space added to key to be unique visually if needed, logic key is unique
+        is_nat = st.checkbox("全省聯播 ", value=False, key="fv_nat")
         regs = ["全省"] if is_nat else st.multiselect("區域", REGIONS_ORDER, default=["北區", "桃竹苗"], key="fv_reg")
         _secs_input = st.multiselect("秒數", DURATIONS, default=[5], key="fv_sec")
         secs = sorted(_secs_input)
@@ -364,7 +404,7 @@ grand_total = media_total + prod_cost + vat
 discount_ratio_str = f"{(total_budget_input / grand_total * 100):.1f}%" if grand_total > 0 else "N/A"
 
 # ==========================================
-# 4. 生成 HTML 預覽
+# 4. 生成 HTML 預覽 (高對比版)
 # ==========================================
 
 def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_data):
@@ -500,6 +540,7 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, totals_data):
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
     worksheet = workbook.add_worksheet("Media Schedule")
 
+    # 保持原有的 Excel 樣式
     fmt_title = workbook.add_format({'font_size': 18, 'bold': True, 'align': 'center'})
     fmt_header_left = workbook.add_format({'align': 'left', 'valign': 'top', 'bold': True})
     fmt_col_header = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#4472C4', 'font_color': 'white', 'text_wrap': True, 'font_size': 10})
