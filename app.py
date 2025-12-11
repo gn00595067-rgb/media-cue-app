@@ -59,30 +59,43 @@ def get_discount(seconds):
     return 1.0
 
 def calculate_schedule(total_spots, days):
+    """
+    優化排程邏輯：
+    1. 前提：total_spots 已經是偶數 (由外部邏輯保證)。
+    2. 邏輯：先將總數除以2，分配給每一天(前多後少)，然後再將每天的數字乘以2。
+    3. 結果：保證每天都是偶數，且呈現 44, 44, 42, 42 這種穩定遞減，不會跳動。
+    """
     if days == 0: return []
+    
+    half_spots = total_spots // 2
     schedule = [0] * days
-    remaining = total_spots
-    base = remaining // days
+    
+    # 基礎平均 (半數)
+    base = half_spots // days
     for i in range(days): schedule[i] = base
-    remaining -= (base * days)
-    idx = 0
-    while remaining > 0:
-        schedule[idx] += 1
-        remaining -= 1
-        idx = (idx + 1) % days
-    for i in range(days - 1):
-        if schedule[i] % 2 != 0:
-            if schedule[i+1] > 0:
-                schedule[i] += 1; schedule[i+1] -= 1
-            elif schedule[i] > 0:
-                schedule[i] -= 1; schedule[i+1] += 1
-    return schedule
+    
+    # 餘數分配 (半數的餘數) - 優先給前面
+    remaining = half_spots % days
+    for i in range(remaining):
+        schedule[i] += 1
+        
+    # 還原為雙倍 (保證偶數)
+    final_schedule = [x * 2 for x in schedule]
+    
+    # 二次檢查 (理論上不需要，但為了安全)
+    current_sum = sum(final_schedule)
+    diff = total_spots - current_sum
+    if diff > 0:
+        # 萬一有誤差，補在第一天
+        final_schedule[0] += diff
+        
+    return final_schedule
 
 # ==========================================
 # 2. UI 設定
 # ==========================================
 
-st.set_page_config(layout="wide", page_title="Cue Sheet Generator v6")
+st.set_page_config(layout="wide", page_title="Cue Sheet Generator Final")
 st.markdown("""
 <style>
     .reportview-container { margin-top: -2em; }
@@ -90,16 +103,17 @@ st.markdown("""
     footer {visibility: hidden;}
     .stProgress > div > div > div > div { background-color: #ff4b4b; }
     
-    /* 預覽表格 CSS - 加強格線 */
+    /* 預覽表格 CSS - 加強黑色格線 */
     .preview-table {
         width: 100%;
         border-collapse: collapse;
         font-family: "Arial", "Microsoft JhengHei", sans-serif;
         font-size: 11px;
         color: #000;
+        border: 2px solid #000; /* 外框加粗 */
     }
     .preview-table th, .preview-table td {
-        border: 1px solid #444 !important; /* 強制深色格線 */
+        border: 1px solid #000 !important; /* 強制黑色實線 */
         padding: 5px;
         text-align: center;
     }
@@ -241,9 +255,13 @@ if total_share_sum > 0:
                 
                 if combined_unit_net == 0: continue
                 
+                # [修改] 檔次計算：無條件進位，且若為奇數則+1變偶數
                 target_spots = math.ceil(sec_budget / combined_unit_net)
-                if target_spots == 0: target_spots = 1
+                if target_spots % 2 != 0:
+                    target_spots += 1 # 強制偶數
+                if target_spots == 0: target_spots = 2 # 至少2檔
                 
+                # [修改] 排程使用新演算法 (半數分配法)
                 daily_sch = calculate_schedule(target_spots, days_count)
                 
                 pkg_cost_total = 0
@@ -254,9 +272,11 @@ if total_share_sum > 0:
 
                 for reg in display_regions:
                     list_price = db.get(reg, [0,0])[0] if cfg["is_national"] else db[reg][0]
-                    rate_val = (list_price / 720.0) * target_spots * discount
-                    real_c = (combined_unit_net * target_spots) if (not cfg["is_national"] or reg == "北區") else 0
-                    pkg_val = pkg_cost_total if (cfg["is_national"] and reg == "北區") else 0
+                    # [修改] 金額四捨五入取整
+                    rate_val = int(round((list_price / 720.0) * target_spots * discount))
+                    
+                    real_c = int(round(combined_unit_net * target_spots)) if (not cfg["is_national"] or reg == "北區") else 0
+                    pkg_val = int(round(pkg_cost_total)) if (cfg["is_national"] and reg == "北區") else 0
                     
                     prog_name = STORE_COUNTS.get(reg, reg)
                     if m_type == "新鮮視": prog_name = STORE_COUNTS.get(f"新鮮視_{reg}", reg)
@@ -276,28 +296,41 @@ if total_share_sum > 0:
                 unit_hyp = db["量販_全省"]["Net_Unit"] * discount
                 unit_sup = db["超市_全省"]["Net_Unit"] * discount
                 combined = unit_hyp + unit_sup
+                
+                # [修改] 檔次計算：強制偶數
                 target_spots = math.ceil(sec_budget / combined)
-                if target_spots == 0: target_spots = 1
+                if target_spots % 2 != 0:
+                    target_spots += 1
+                if target_spots == 0: target_spots = 2
+
                 sch = calculate_schedule(target_spots, days_count)
+                
+                # [修改] 金額四捨五入取整
+                rate_hyp = int(round((db["量販_全省"]["List"]/720.0)*target_spots*discount))
+                rate_sup = int(round((db["超市_全省"]["List"]/720.0)*target_spots*discount))
                 
                 final_rows.append({
                     "media": "家樂福", "region": "全省量販", "location": "全省量販", "program": "67店",
                     "daypart": "09:00-23:00", "seconds": sec, "schedule": sch, "spots": target_spots,
-                    "rate_net": (db["量販_全省"]["List"]/720.0)*target_spots*discount,
+                    "rate_net": rate_hyp,
                     "pkg_cost": 0, "is_pkg_start": False, "is_pkg_member": False, 
-                    "real_cost": unit_hyp * target_spots
+                    "real_cost": int(round(unit_hyp * target_spots))
                 })
                 final_rows.append({
                     "media": "家樂福", "region": "全省超市", "location": "全省超市", "program": "250店",
                     "daypart": "00:00-24:00", "seconds": sec, "schedule": sch, "spots": target_spots,
-                    "rate_net": (db["超市_全省"]["List"]/720.0)*target_spots*discount,
+                    "rate_net": rate_sup,
                     "pkg_cost": 0, "is_pkg_start": False, "is_pkg_member": False, 
-                    "real_cost": unit_sup * target_spots
+                    "real_cost": int(round(unit_sup * target_spots))
                 })
 
+# 計算總金額
+# 為了避免顯示金額加總不一致，我們這裡使用顯示在表格上的 rate_net (或 real_cost) 進行加總
+# 在全省包的情況下，rate_net 是 list price 算出來的，不能直接加
+# 我們用 real_cost 確保是實收
 media_total = sum(r["real_cost"] for r in final_rows)
 prod_cost = 10000
-vat = (media_total + prod_cost) * 0.05
+vat = int(round((media_total + prod_cost) * 0.05))
 grand_total = media_total + prod_cost + vat
 discount_ratio_str = f"{(total_budget_input / grand_total * 100):.1f}%" if grand_total > 0 else "N/A"
 
@@ -346,13 +379,13 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
             tr += f"<td>{r_data['program']}</td>"
             tr += f"<td>{r_data['daypart']}</td>"
             tr += f"<td>{r_data['seconds']}秒</td>"
-            tr += f"<td class='align-right'>{int(r_data['rate_net']):,}</td>"
+            tr += f"<td class='align-right'>{r_data['rate_net']:,}</td>" # 確保無小數
             
             if row['is_pkg_start']:
                 if k == 0:
-                    tr += f"<td rowspan='{group_size}' class='align-right'>{int(row['pkg_cost']):,}</td>"
+                    tr += f"<td rowspan='{group_size}' class='align-right'>{row['pkg_cost']:,}</td>"
             elif not row['is_pkg_member']:
-                val = int(r_data['real_cost']) if "家樂福" in r_data['media'] else ""
+                val = r_data['real_cost'] if "家樂福" in r_data['media'] else ""
                 val_str = f"{val:,}" if val != "" else ""
                 tr += f"<td class='align-right'>{val_str}</td>"
             
@@ -363,6 +396,9 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
             tr += "</tr>"
             data_rows_html += tr
         i = j
+    
+    # 計算顯示用的 Total Rate (Net)
+    total_rate_display = sum(r['rate_net'] for r in rows)
 
     html = f"""
     <div style="overflow-x: auto;">
@@ -398,8 +434,8 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
             {data_rows_html}
             <tr>
                 <td colspan="5" class="align-right">Total</td>
-                <td class="align-right">{sum(r['rate_net'] for r in rows):,}</td>
-                <td class="align-right">{int(totals_data['media_total']):,}</td>
+                <td class="align-right">{total_rate_display:,}</td>
+                <td class="align-right">{totals_data['media_total']:,}</td>
                 <td colspan="{days_cnt}"></td>
                 <td class="cell-yellow">{sum(r['spots'] for r in rows)}</td>
             </tr>
@@ -410,12 +446,12 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
             </tr>
             <tr>
                 <td colspan="6" class="align-right">5% VAT</td>
-                <td class="align-right">{int(totals_data['vat']):,}</td>
+                <td class="align-right">{totals_data['vat']:,}</td>
                 <td colspan="{days_cnt + 1}"></td>
             </tr>
             <tr>
                 <td colspan="6" class="align-right">Grand Total</td>
-                <td class="align-right">{int(totals_data['grand_total']):,}</td>
+                <td class="align-right">{totals_data['grand_total']:,}</td>
                 <td colspan="{days_cnt + 1}"></td>
             </tr>
         </table>
@@ -436,6 +472,7 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, mediums, totals_d
     
     fmt_cell = workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1, 'font_size': 10})
     fmt_cell_left = workbook.add_format({'align': 'left', 'valign': 'vcenter', 'border': 1, 'font_size': 10, 'text_wrap': True})
+    # [修改] Excel 格式不顯示小數
     fmt_num = workbook.add_format({'align': 'right', 'valign': 'vcenter', 'border': 1, 'num_format': '#,##0', 'font_size': 10})
     fmt_spots = workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1, 'bold': True, 'bg_color': '#FFF2CC', 'font_size': 10})
     
@@ -558,7 +595,7 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, mediums, totals_d
 st.markdown("### 3. 計算結果摘要")
 m1, m2, m3 = st.columns(3)
 m1.metric("客戶預算", f"{total_budget_input:,}")
-m2.metric("Cue表總金額 (含稅)", f"{int(grand_total):,}", delta=f"差異 +{int(grand_total - total_budget_input):,}")
+m2.metric("Cue表總金額 (含稅)", f"{grand_total:,}", delta=f"差異 +{grand_total - total_budget_input:,}")
 m3.metric("預算/表價比 (折扣率)", discount_ratio_str)
 
 st.markdown("### 4. Cue 表網頁預覽")
