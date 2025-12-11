@@ -2,260 +2,237 @@ import streamlit as st
 import pandas as pd
 import streamlit.components.v1 as components
 from jinja2 import Template
-from datetime import datetime, timedelta
+import io
 
-# 設定網頁配置為寬版，方便看報表
+# ==========================================
+# 1. 頁面設定與 CSS
+# ==========================================
 st.set_page_config(page_title="Cue表自動生成系統", layout="wide")
 
-def main():
-    st.title("📺 廣播 Cue 表排程產生器")
-    st.markdown("---")
+# 定義 HTML/CSS 模板 (樣式與之前相同)
+html_template_str = """
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: "Microsoft JhengHei", sans-serif; margin: 0; padding: 10px; color: #333; }
+        .header-info { background-color: #f1f3f4; padding: 15px; margin-bottom: 20px; border-left: 6px solid #1a73e8; }
+        .header-info p { margin: 5px 0; font-weight: bold; font-size: 14px; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
+        th, td { border: 1px solid #c0c0c0; padding: 8px; text-align: center; vertical-align: middle; }
+        th { background-color: #3c4043; color: #ffffff; position: sticky; top: 0; }
+        .text-left { text-align: left; }
+        .text-right { text-align: right; }
+        tbody tr:nth-child(even) { background-color: #f8f9fa; }
+        tbody tr:hover { background-color: #e8f0fe; }
+        .package-cell { background-color: #fff !important; font-weight: bold; color: #d93025; border-bottom: 1px solid #bbb; }
+        .total-row { background-color: #e8eaed !important; font-weight: bold; border-top: 2px solid #333; }
+    </style>
+</head>
+<body>
+    <div class="header-info">
+        <p>客戶名稱：{{ client_name }}</p>
+        <p>走期：{{ period }}</p>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Station</th>
+                <th>Location</th>
+                <th>Program</th>
+                <th>Day-part</th>
+                <th>Size</th>
+                <th>Rate (Net)</th>
+                <th>Package-cost</th>
+                {% for i in range(1, 16) %}
+                <th>{{ i }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td class="text-left">{{ row.Station }}</td>
+                <td class="text-left">{{ row.Location }}</td>
+                <td class="text-left">{{ row.Program }}</td>
+                <td>{{ row.Daypart }}</td>
+                <td>{{ row.Size }}</td>
+                <td class="text-right">{{ "{:,}".format(row.Rate) }}</td>
+                
+                {% if row.is_first %}
+                    <td class="text-right package-cell" rowspan="{{ row.rowspan }}">
+                        {{ "{:,}".format(row.package_cost) }}
+                    </td>
+                {% endif %}
 
-    # ==========================================
-    # 1. 模擬資料輸入 (實際應用時這裡可以是 pd.read_excel)
-    # ==========================================
-    # 這裡我們模擬截圖中的資料結構
-    # 'package_group': 用來控制哪些列要算在一起 (例如北區+桃竹苗是同一組)
-    raw_data = [
-        {
-            "station": "全家便利商店通路廣播",
-            "location": "北區-北區",
-            "program": "北北基 1,649店",
-            "daypart": "00:00-24:00",
-            "size": "20秒",
-            "rate": 416111,
-            "package_group": "A", # 群組 A
-            "spots": [50] * 15 # 模擬 1~15 號每天播 50 次
-        },
-        {
-            "station": "全家便利商店通路廣播",
-            "location": "桃竹苗區-桃竹苗",
-            "program": "桃竹苗 779店",
-            "daypart": "00:00-24:00",
-            "size": "20秒",
-            "rate": 249667,
-            "package_group": "A", # 群組 A (費用會跟上面加在一起)
-            "spots": [50] * 15
-        },
-        {
-            "station": "全家便利商店通路廣播",
-            "location": "中區-中區",
-            "program": "中彰投 839店",
-            "daypart": "00:00-24:00",
-            "size": "20秒",
-            "rate": 249667,
-            "package_group": "B", # 群組 B (新的一組)
-            "spots": [50] * 5 + [48] * 10 # 模擬有些天數次數不同
-        },
-        {
-            "station": "全家便利商店通路廣播",
-            "location": "雲嘉南區",
-            "program": "雲嘉南 900店",
-            "daypart": "00:00-24:00",
-            "size": "20秒",
-            "rate": 200000,
-            "package_group": "B", # 群組 B
-            "spots": [48] * 15
-        }
-    ]
+                {% for i in range(1, 16) %}
+                <td>{{ row.get(i, 0) }}</td> {% endfor %}
+            </tr>
+            {% endfor %}
+            <tr class="total-row">
+                <td colspan="5" class="text-right">Total:</td>
+                <td class="text-right">{{ "{:,}".format(total_rate) }}</td>
+                <td></td>
+                <td colspan="15"></td>
+            </tr>
+        </tbody>
+    </table>
+</body>
+</html>
+"""
 
-    # ==========================================
-    # 2. Python 資料處理核心邏輯
-    # ==========================================
-    df = pd.DataFrame(raw_data)
+# ==========================================
+# 2. 輔助功能：產生範本與處理資料
+# ==========================================
 
-    # [關鍵步驟] 計算 Package Cost
-    # 這是算出 G20 (665,778) 數字的地方
-    group_sums = df.groupby('package_group')['rate'].sum().to_dict()
+def get_excel_template():
+    """產生一個標準的 Excel 範本供使用者下載"""
+    # 定義標準欄位
+    columns = ['PackageGroup', 'Station', 'Location', 'Program', 'Daypart', 'Size', 'Rate']
+    # 增加 1~15 號的欄位
+    day_columns = [i for i in range(1, 16)]
+    
+    # 建立範例資料
+    data = {
+        'PackageGroup': ['A', 'A', 'B'], # 關鍵欄位：用來群組計算 Package Cost
+        'Station': ['全家廣播', '全家廣播', '全家廣播'],
+        'Location': ['北區', '桃竹苗', '中區'],
+        'Program': ['北北基', '桃竹苗店', '中彰投'],
+        'Daypart': ['00:00-24:00', '00:00-24:00', '00:00-24:00'],
+        'Size': ['20秒', '20秒', '20秒'],
+        'Rate': [416111, 249667, 200000]
+    }
+    
+    df = pd.DataFrame(data)
+    # 補上天數欄位 (預設填 50)
+    for d in day_columns:
+        df[d] = 50
+        
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='CueData')
+    return output.getvalue()
 
-    # 準備渲染用的資料列表
+def process_uploaded_file(df):
+    """處理上傳的 DataFrame，計算 Package Cost"""
+    
+    # 1. 確保欄位名稱正確 (轉成字串避免數字欄位出錯)
+    df.columns = [str(c) for c in df.columns]
+    
+    # 2. 核心邏輯：計算 Package Cost (G20)
+    # 依照 'PackageGroup' 欄位分組並加總 Rate
+    if 'PackageGroup' not in df.columns:
+        st.error("錯誤：Excel 中找不到 'PackageGroup' 欄位，無法計算組合價格。")
+        return None, 0
+
+    group_sums = df.groupby('PackageGroup')['Rate'].sum().to_dict()
+    
+    # 3. 整理資料結構給 Jinja2
     processed_rows = []
     seen_groups = set()
-
+    
     for index, row in df.iterrows():
-        group = row['package_group']
+        group = row['PackageGroup']
         row_dict = row.to_dict()
         
-        # 處理合併儲存格邏輯 (Rowspan)
         if group not in seen_groups:
-            # 如果是該群組的第一筆，設定 rowspan 和總金額
-            count = len(df[df['package_group'] == group])
+            # 計算 rowspan (該群組有幾列)
+            count = len(df[df['PackageGroup'] == group])
             row_dict['rowspan'] = count
             row_dict['package_cost'] = group_sums[group]
             row_dict['is_first'] = True
             seen_groups.add(group)
         else:
-            # 如果不是第一筆，就不顯示 Package Cost
             row_dict['is_first'] = False
-        
+            
+        # 處理日期欄位 (1~15)，將 NaN 轉為空字串或 0
+        for i in range(1, 16):
+            key = str(i)
+            if key in row_dict:
+                 # 如果是 NaN 轉成空字串，否則轉成整數
+                val = row_dict[key]
+                row_dict[i] = int(val) if pd.notna(val) else 0
+            else:
+                row_dict[i] = 0
+                
         processed_rows.append(row_dict)
+        
+    total_rate = df['Rate'].sum()
+    return processed_rows, total_rate
 
-    # 計算整張表的總 Total
-    total_rate = df['rate'].sum()
+# ==========================================
+# 3. 主程式介面 (Sidebar 與 Main)
+# ==========================================
 
-    # ==========================================
-    # 3. HTML/CSS 模板設計 (包含格線與樣式)
-    # ==========================================
-    html_template = """
-    <!DOCTYPE html>
-    <html lang="zh-Hant">
-    <head>
-        <meta charset="UTF-8">
-        <style>
-            /* 基礎字體設定 */
-            body { 
-                font-family: "Microsoft JhengHei", "Heiti TC", sans-serif; 
-                margin: 0; padding: 10px; color: #333; 
-            }
-            
-            /* 表頭資訊區塊 */
-            .header-info {
-                background-color: #f1f3f4;
-                padding: 15px;
-                margin-bottom: 20px;
-                border-left: 6px solid #1a73e8;
-                border-radius: 4px;
-            }
-            .header-info p { margin: 5px 0; font-weight: bold; font-size: 14px; }
-
-            /* 表格主體設定 */
-            table {
-                width: 100%;
-                border-collapse: collapse; /* 重要：讓格線合併，不會有雙線 */
-                font-size: 13px;
-                white-space: nowrap; /* 避免文字自動換行導致版面亂掉 */
-            }
-
-            /* 欄位 (Cell) 設定 */
-            th, td {
-                border: 1px solid #c0c0c0; /* 設定格線顏色 (灰色) */
-                padding: 10px 8px;
-                text-align: center;
-                vertical-align: middle;
-            }
-
-            /* 表頭 (Header) 設定 */
-            th {
-                background-color: #3c4043; /* 深灰底 */
-                color: #ffffff;            /* 白字 */
-                position: sticky;          /* 固定表頭 */
-                top: 0;
-                z-index: 2;
-            }
-
-            /* 斑馬紋 (Zebra Striping) - 偶數行變色 */
-            tbody tr:nth-child(even) {
-                background-color: #f8f9fa; 
-            }
-            
-            /* 滑鼠滑過變色 */
-            tbody tr:hover {
-                background-color: #e8f0fe;
-            }
-
-            /* 輔助樣式 */
-            .text-left { text-align: left; }
-            .text-right { text-align: right; }
-            
-            /* Package Cost 欄位特別樣式 */
-            .package-cell {
-                background-color: #fff !important; /* 蓋過斑馬紋，保持白色 */
-                font-weight: bold;
-                color: #d93025; /* 紅字突顯 */
-                border-bottom: 1px solid #c0c0c0;
-            }
-
-            /* 總計列樣式 */
-            .total-row {
-                background-color: #e8eaed !important;
-                font-weight: bold;
-                border-top: 2px solid #333;
-            }
-        </style>
-    </head>
-    <body>
-
-        <div class="header-info">
-            <p>客戶名稱：萬國通路</p>
-            <p>Product：20秒、5秒</p>
-            <p>Period：2025. 01. 01 - 2025. 01. 31</p>
-            <p>Medium：家樂福、全家廣播、新鮮視</p>
-        </div>
-
-        <table>
-            <thead>
-                <tr>
-                    <th style="min-width: 80px;">Station</th>
-                    <th style="min-width: 100px;">Location</th>
-                    <th style="min-width: 120px;">Program</th>
-                    <th>Day-part</th>
-                    <th>Size</th>
-                    <th>Rate (Net)</th>
-                    <th>Package-cost (Net)</th>
-                    {% for i in range(1, 16) %}
-                    <th>{{ i }}<br>日</th>
-                    {% endfor %}
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in rows %}
-                <tr>
-                    <td class="text-left">{{ row.station }}</td>
-                    <td class="text-left">{{ row.location }}</td>
-                    <td class="text-left">{{ row.program }}</td>
-                    <td>{{ row.daypart }}</td>
-                    <td>{{ row.size }}</td>
-                    <td class="text-right">{{ "{:,}".format(row.rate) }}</td>
-                    
-                    {# 這裡處理 Package Cost 合併欄位 #}
-                    {% if row.is_first %}
-                        <td class="text-right package-cell" rowspan="{{ row.rowspan }}">
-                            {{ "{:,}".format(row.package_cost) }}
-                        </td>
-                    {% endif %}
-
-                    {# 填入每日次數 #}
-                    {% for spot in row.spots %}
-                    <td>{{ spot }}</td>
-                    {% endfor %}
-                </tr>
-                {% endfor %}
-
-                <tr class="total-row">
-                    <td colspan="5" class="text-right">Total:</td>
-                    <td class="text-right">{{ "{:,}".format(total_rate) }}</td>
-                    <td></td> <td colspan="15"></td>
-                </tr>
-            </tbody>
-        </table>
-
-    </body>
-    </html>
-    """
-
-    # ==========================================
-    # 4. 渲染與顯示
-    # ==========================================
+def main():
+    st.sidebar.title("🎛️ 設定控制台")
     
-    # 使用 Jinja2 填入資料
-    template = Template(html_template)
-    html_output = template.render(
-        rows=processed_rows, 
-        total_rate=total_rate
+    # Step 1: 下載範本
+    st.sidebar.header("1. 下載資料範本")
+    st.sidebar.markdown("請先下載 Excel 範本，填寫後上傳。")
+    template_file = get_excel_template()
+    st.sidebar.download_button(
+        label="📥 下載 Excel 範本 (.xlsx)",
+        data=template_file,
+        file_name="cue_schedule_template.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+    
+    st.sidebar.markdown("---")
+    
+    # Step 2: 上傳檔案
+    st.sidebar.header("2. 上傳 Cue 表資料")
+    uploaded_file = st.sidebar.file_uploader("選擇 Excel 檔案", type=['xlsx'])
+    
+    # Step 3: 輸入基本資訊
+    st.sidebar.header("3. 報表資訊")
+    client_name = st.sidebar.text_input("客戶名稱", "萬國通路")
+    period = st.sidebar.text_input("走期", "2025. 01. 01 - 2025. 01. 31")
 
-    # 在 Streamlit 中顯示 HTML
-    # height 設定為 600px, scrolling=True 允許表格過長時捲動
-    st.subheader("📊 預覽結果")
-    components.html(html_output, height=600, scrolling=True)
+    # 主畫面邏輯
+    st.title("📺 廣播 Cue 表排程產生器")
 
-    # 下載按鈕
-    st.download_button(
-        label="📥 下載 HTML 報表",
-        data=html_output,
-        file_name="cue_schedule_report.html",
-        mime="text/html"
-    )
+    if uploaded_file is not None:
+        try:
+            # 讀取 Excel
+            df = pd.read_excel(uploaded_file)
+            
+            # 顯示原始資料預覽 (Debug用)
+            with st.expander("查看上傳的原始資料"):
+                st.dataframe(df)
+
+            # 處理資料
+            rows, total_rate = process_uploaded_file(df)
+
+            if rows:
+                # 渲染 HTML
+                template = Template(html_template_str)
+                html_output = template.render(
+                    rows=rows,
+                    total_rate=total_rate,
+                    client_name=client_name,
+                    period=period
+                )
+
+                st.success("✅ 報表生成成功！")
+                
+                # 顯示 HTML
+                st.subheader("報表預覽")
+                components.html(html_output, height=600, scrolling=True)
+
+                # 下載按鈕
+                st.download_button(
+                    label="📥 下載完整 HTML 報表",
+                    data=html_output,
+                    file_name="cue_report_final.html",
+                    mime="text/html"
+                )
+        except Exception as e:
+            st.error(f"檔案處理發生錯誤: {e}")
+            st.warning("請確保您上傳的是從左側下載的標準範本格式。")
+    else:
+        st.info("👈 請從左側側邊欄下載範本，並上傳資料以開始使用。")
 
 if __name__ == "__main__":
     main()
