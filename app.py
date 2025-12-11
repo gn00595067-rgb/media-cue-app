@@ -6,7 +6,7 @@ import xlsxwriter
 from datetime import timedelta, datetime
 
 # ==========================================
-# 1. 基礎資料與設定 (含 2026 報價與折扣係數)
+# 1. 基礎資料與設定
 # ==========================================
 
 STORE_COUNTS = {
@@ -53,12 +53,12 @@ PRICING_DB = {
 
 # 秒數折扣係數表 (Duration Factor)
 DISCOUNT_TABLE = {
-    5: 0.5,   # 5秒打5折
-    10: 0.6,  # 10秒打6折
+    5: 0.5,   
+    10: 0.6,  
     15: 0.7,
-    20: 0.8,  # 20秒打8折 (非 0.66)
+    20: 0.8, 
     25: 0.9,
-    30: 1.0,  # 基準
+    30: 1.0, 
     35: 1.15,
     40: 1.3,
     45: 1.5,
@@ -73,9 +73,7 @@ def get_discount(seconds):
 
 def calculate_schedule(total_spots, days):
     """
-    黃金版排程邏輯：
-    1. 總數除以2，分配給每一天 (半數分配法)。
-    2. 再將每天數字乘以2，保證每天都是偶數且遞減平滑 (44, 44, 42, 42)。
+    黃金版排程邏輯：偶數分配
     """
     if days == 0: return []
     
@@ -91,7 +89,6 @@ def calculate_schedule(total_spots, days):
         
     final_schedule = [x * 2 for x in schedule]
     
-    # 安全檢查補償
     current_sum = sum(final_schedule)
     diff = total_spots - current_sum
     if diff > 0:
@@ -133,7 +130,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("媒體 Cue 表生成器 (2026 企頻版)")
+st.title("媒體 Cue 表生成器 (修正顯示邏輯版)")
 
 with st.sidebar:
     st.header("1. 基本資料")
@@ -160,7 +157,6 @@ with col_m1:
         is_nat = st.checkbox("全省聯播", value=True, key="fm_nat")
         regs = ["全省"] if is_nat else st.multiselect("區域", REGIONS_ORDER, key="fm_reg")
         _secs_input = st.multiselect("秒數", DURATIONS, default=[20], key="fm_sec")
-        # 這裡的排序僅影響 UI 顯示，最後報表會再排一次
         secs = sorted(_secs_input)
         share = st.slider("廣播-預算佔比%", 0, remaining_global_share, min(70, remaining_global_share), key="fm_share")
         remaining_global_share -= share
@@ -263,7 +259,6 @@ if sum(m["share"] for m in config_media.values()) > 0:
                 
                 if combined_unit_net == 0: continue
                 
-                # 檔次計算 (強制偶數)
                 target_spots = math.ceil(sec_budget / combined_unit_net)
                 if target_spots % 2 != 0: target_spots += 1 
                 if target_spots == 0: target_spots = 2
@@ -325,18 +320,15 @@ if sum(m["share"] for m in config_media.values()) > 0:
                     "real_cost": int(round(unit_sup * target_spots))
                 })
 
-# 【排序邏輯修正】
-# 1. Medium 順序：永遠照 全家廣播 -> 新鮮視 -> 家樂福
+# 【排序邏輯】
 media_order_map = {"全家廣播": 1, "新鮮視": 2, "家樂福": 3}
 final_rows.sort(key=lambda x: media_order_map.get(x['media'], 99))
 
-# 2. Product 標題字串排序：依數字大小 (5秒, 10秒...)
-# 從 all_secs ("20秒", "5秒") 中提取數字並排序
+# 【Product 標題排序：數字小的在前】
 def parse_sec_int(s):
     return int(s.replace("秒", ""))
 sorted_secs_list = sorted(list(all_secs), key=parse_sec_int)
 product_str = "、".join(sorted_secs_list)
-
 
 media_total = sum(r["real_cost"] for r in final_rows)
 prod_cost = 10000
@@ -349,7 +341,6 @@ discount_ratio_str = f"{(total_budget_input / grand_total * 100):.1f}%" if grand
 # ==========================================
 
 def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_data):
-    # Medium 字串也依照固定順序產生
     used_media = sorted(list(set(r['media'] for r in rows)), key=lambda x: media_order_map.get(x, 99))
     mediums_str = "、".join(used_media)
 
@@ -372,7 +363,6 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
     while i < len(rows):
         row = rows[i]
         j = i + 1
-        # 分組邏輯：同媒體 & 同秒數 視為一組 (因為已排好序，直接往下找即可)
         while j < len(rows) and rows[j]['media'] == row['media'] and rows[j]['seconds'] == row['seconds']:
             j += 1
         group_size = j - i
@@ -396,13 +386,19 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
             tr += f"<td>{r_data['seconds']}秒</td>"
             tr += f"<td class='align-right'>{r_data['rate_net']:,}</td>"
             
+            # 【重要修正：Package Cost 欄位顯示邏輯】
+            # 如果是 Package Start (全省廣播的北區)，顯示 pkg_cost
             if row['is_pkg_start']:
                 if k == 0:
                     tr += f"<td rowspan='{group_size}' class='align-right'>{row['pkg_cost']:,}</td>"
-            elif not row['is_pkg_member']:
-                val = r_data['real_cost'] if "家樂福" in r_data['media'] else ""
-                val_str = f"{val:,}" if val != "" else ""
-                tr += f"<td class='align-right'>{val_str}</td>"
+            # 如果是 Package Member (全省廣播的其他區)，不顯示
+            elif row['is_pkg_member']:
+                pass 
+            # 【修正點】：如果是其他 (新鮮視、家樂福)，顯示 real_cost，確保整欄加總正確
+            else:
+                 val = r_data['real_cost']
+                 val_str = f"{val:,}" if val > 0 else ""
+                 tr += f"<td class='align-right'>{val_str}</td>"
             
             for s_val in r_data['schedule']:
                 tr += f"<td>{s_val}</td>"
@@ -553,22 +549,20 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, totals_data):
             worksheet.write(r_idx, 4, f"{r_data['seconds']}秒", fmt_cell)
             worksheet.write(r_idx, 5, r_data['rate_net'], fmt_num)
             
+            # 【重要修正】Excel 也要同步：如果是 Package Start 顯示 pkg_cost，如果是獨立項目顯示 real_cost
+            if r_data['is_pkg_start']:
+                 if k == 0 and group_size > 1:
+                     worksheet.merge_range(current_row, 6, current_row + group_size - 1, 6, r_data['pkg_cost'], fmt_num)
+                 elif k == 0:
+                     worksheet.write(r_idx, 6, r_data['pkg_cost'], fmt_num)
+            elif not r_data['is_pkg_member']:
+                 # 只要不是 pkg_member (即新鮮視、家樂福)，都顯示 real_cost
+                 worksheet.write(r_idx, 6, r_data['real_cost'], fmt_num)
+
             for d_idx, s_val in enumerate(r_data['schedule']):
                 worksheet.write(r_idx, 7 + d_idx, s_val, fmt_cell)
                 
             worksheet.write(r_idx, last_col, r_data['spots'], fmt_spots)
-
-        if row['is_pkg_start']:
-            if group_size > 1:
-                worksheet.merge_range(current_row, 6, current_row + group_size - 1, 6, row['pkg_cost'], fmt_num)
-            else:
-                worksheet.write(current_row, 6, row['pkg_cost'], fmt_num)
-        elif not row['is_pkg_member']:
-             for k in range(group_size):
-                 if "家樂福" in rows[i+k]['media']:
-                     worksheet.write(current_row + k, 6, rows[i+k]['real_cost'], fmt_num) 
-                 else:
-                     worksheet.write(current_row + k, 6, "", fmt_num)
 
         current_row += group_size
         i = j
