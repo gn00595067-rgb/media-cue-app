@@ -79,7 +79,7 @@ def calculate_schedule(total_spots, days):
 # ==========================================
 
 st.set_page_config(layout="wide", page_title="Cue Sheet Generator Final")
-st.title("📺 媒體 Cue 表生成器 (顯色修復版)")
+st.title("📺 媒體 Cue 表生成器 (高對比終極版)")
 
 # --- 1. 基本資料 (移至主畫面) ---
 with st.container():
@@ -182,7 +182,7 @@ if fv_data: config_media["新鮮視"] = fv_data
 if cf_data: config_media["家樂福"] = cf_data
 
 # ==========================================
-# 3. 計算邏輯 (維持黃金版邏輯)
+# 3. 計算邏輯
 # ==========================================
 
 final_rows = []
@@ -301,7 +301,7 @@ grand_total = media_total + prod_cost + vat
 discount_ratio_str = f"{(total_budget_input / grand_total * 100):.1f}%" if grand_total > 0 else "N/A"
 
 # ==========================================
-# 4. 生成 HTML 預覽 (CSS 樣式已內嵌，確保不會被擋)
+# 4. 生成 HTML 預覽 (高對比 + 不透明優化)
 # ==========================================
 
 def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_data):
@@ -317,6 +317,7 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
     
     for i in range(days_cnt):
         wd = curr.weekday()
+        # 週末使用暖黃色 header-yellow
         cls = "header-yellow" if wd >= 5 else "header-blue"
         date_header_row2 += f"<th class='{cls}'>{curr.day}</th>"
         date_header_row3 += f"<th class='{cls}'>{weekdays_map[wd]}</th>"
@@ -337,7 +338,7 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
         
         for k in range(group_size):
             r_data = rows[i+k]
-            tr = "<tr>"
+            tr = "<tr>" # CSS 會處理 nth-child 背景色
             if k == 0:
                 tr += f"<td rowspan='{group_size}' class='align-left'>{m_name}</td>"
             
@@ -370,7 +371,8 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
     
     total_rate_display = sum(r['rate_net'] for r in rows)
 
-    # 關鍵修正：將 CSS 樣式直接寫在 HTML 字串中，確保 iframe 內部能讀取
+    # 關鍵修正：確保所有背景都是不透明顏色 (Solid Colors) 以阻擋深色模式
+    # 文字強制黑色 (#000)
     css_style = """
     <style>
         .preview-table {
@@ -378,25 +380,44 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
             border-collapse: collapse;
             font-family: "Microsoft JhengHei", "Arial", sans-serif;
             font-size: 13px;
-            color: #333;
-            min-width: 1200px; /* 強制寬度，觸發橫向捲動 */
+            color: #000; /* 強制全黑字體 */
+            min-width: 1200px;
+            background-color: #ffffff; /* 強制白底，避免透明 */
         }
         .preview-table th, .preview-table td {
-            border: 1px solid #999;
+            border: 1px solid #555; /* 深灰色格線，對比更強 */
             padding: 8px;
             text-align: center;
             vertical-align: middle;
         }
-        .header-blue { background-color: #2c3e50; color: white; font-weight: bold; }
-        .header-yellow { background-color: #f1c40f; color: #333; font-weight: bold; }
-        .cell-yellow { background-color: #fff3cd; font-weight: bold; color: #856404; }
-        .row-total { background-color: #d4edda; font-weight: bold; color: #155724; }
-        .row-grand-total { background-color: #28a745; color: white; font-weight: bold; font-size: 15px; }
+        /* 表頭：深藍底白字 */
+        .header-blue { background-color: #2c3e50; color: white !important; font-weight: bold; }
+        
+        /* 週末：暖黃色底黑字 */
+        .header-yellow { background-color: #f1c40f; color: #000 !important; font-weight: bold; }
+        
+        /* 檔次：淡黃底黑字 */
+        .cell-yellow { background-color: #fff3cd; color: #000 !important; font-weight: bold; }
+        
+        /* 總計列：淺綠底黑字 */
+        .row-total { background-color: #d4edda; color: #000 !important; font-weight: bold; }
+        
+        /* Grand Total：亮黃底黑字 (改為黃色以增加對比) */
+        .row-grand-total { 
+            background-color: #ffc107; /* Amber Color */
+            color: #000 !important; /* 強制黑字，避免淺色字看不見 */
+            font-weight: bold; 
+            font-size: 15px; 
+            border-top: 2px solid #000; /* 頂部加粗線 */
+        }
+        
         .align-left { text-align: left; }
         .align-right { text-align: right; }
-        /* 斑馬紋 */
-        tr:nth-child(even) { background-color: #f8f9fa; }
-        tr:hover { background-color: #e8f4f8; }
+        
+        /* 斑馬紋：強制不透明背景 */
+        tr { background-color: #ffffff; } /* 預設白底 */
+        tr:nth-child(even) { background-color: #f2f2f2; } /* 偶數淺灰底 */
+        tr:hover { background-color: #e6f7ff; } /* 滑過變色 */
     </style>
     """
 
@@ -480,7 +501,7 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, totals_data):
     fmt_spots = workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1, 'bold': True, 'bg_color': '#FFF2CC', 'font_size': 10})
     
     fmt_total = workbook.add_format({'align': 'right', 'valign': 'vcenter', 'border': 1, 'bold': True, 'bg_color': '#E2EFDA', 'num_format': '#,##0', 'font_size': 10})
-    fmt_grand_total = workbook.add_format({'align': 'right', 'valign': 'vcenter', 'border': 1, 'bold': True, 'bg_color': '#548235', 'font_color': 'white', 'num_format': '#,##0', 'font_size': 10})
+    fmt_grand_total = workbook.add_format({'align': 'right', 'valign': 'vcenter', 'border': 1, 'bold': True, 'bg_color': '#FFC107', 'num_format': '#,##0', 'font_size': 10})
 
     worksheet.merge_range('A1:AJ1', "Media Schedule", fmt_title)
     
