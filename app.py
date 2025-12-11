@@ -29,23 +29,25 @@ STORE_COUNTS = {
 REGIONS_ORDER = ["北區", "桃竹苗", "中區", "雲嘉南", "高屏", "東區"]
 DURATIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
 
-# 價格資料庫 (依據 2026 企頻報價)
+# 價格資料庫 (修正：明確定義 Std_Spots)
 PRICING_DB = {
     "全家廣播": {
-        "Std_Spots": 480,
+        "Std_Spots": 480, # 基準檔次 480
+        # 格式: [List Price, Net Price]
         "全省": [400000, 320000], 
         "北區": [250000, 200000], "桃竹苗": [150000, 120000],
         "中區": [150000, 120000], "雲嘉南": [100000, 80000], 
         "高屏": [100000, 80000], "東區": [62500, 50000]
     },
     "新鮮視": {
-        "Std_Spots": 504,
+        "Std_Spots": 504, # 基準檔次 504
         "全省": [150000, 120000], 
         "北區": [150000, 120000], "桃竹苗": [120000, 96000],
         "中區": [90000, 72000], "雲嘉南": [75000, 60000], 
         "高屏": [75000, 60000], "東區": [45000, 36000]
     },
     "家樂福": {
+        # 家樂福特殊：直接定義 Net Unit
         "量販_全省": {"List": 310000, "Net_Unit": 595},
         "超市_全省": {"List": 100000, "Net_Unit": 111}
     }
@@ -79,7 +81,7 @@ def calculate_schedule(total_spots, days):
 # ==========================================
 
 st.set_page_config(layout="wide", page_title="Cue Sheet Generator Final")
-st.title("📺 媒體 Cue 表生成器 (高對比終極版)")
+st.title("📺 媒體 Cue 表生成器 (金額計算修正版)")
 
 # --- 1. 基本資料 (移至主畫面) ---
 with st.container():
@@ -182,7 +184,7 @@ if fv_data: config_media["新鮮視"] = fv_data
 if cf_data: config_media["家樂福"] = cf_data
 
 # ==========================================
-# 3. 計算邏輯
+# 3. 計算邏輯 (核心修正：正確使用 Std_Spots 和 Net Price)
 # ==========================================
 
 final_rows = []
@@ -203,13 +205,16 @@ if sum(m["share"] for m in config_media.values()) > 0:
             
             if m_type in ["全家廣播", "新鮮視"]:
                 db = PRICING_DB[m_type]
+                std_spots = db["Std_Spots"] # 動態取得 480 或 504
+                
                 calc_regions = ["全省"] if cfg["is_national"] else cfg["regions"]
                 display_regions = REGIONS_ORDER if cfg["is_national"] else cfg["regions"]
                 
                 combined_unit_net = 0
                 for reg in calc_regions:
+                    # 使用 Net Price (index 1) 計算 unit_net
                     net_price_total = db[reg][1]
-                    unit_net = (net_price_total / db["Std_Spots"]) * discount
+                    unit_net = (net_price_total / std_spots) * discount
                     combined_unit_net += unit_net
                 
                 if combined_unit_net == 0: continue
@@ -222,13 +227,17 @@ if sum(m["share"] for m in config_media.values()) > 0:
                 
                 pkg_cost_total = 0
                 if cfg["is_national"]:
-                    nat_list = db["全省"][0]
-                    mult = 1.1 if target_spots < 720 else 1.0
-                    pkg_cost_total = (nat_list / 720.0) * target_spots * discount * mult
+                    # 使用 Net Price (index 1) 計算打包總價
+                    nat_net_total = db["全省"][1] 
+                    mult = 1.1 if target_spots < 720 else 1.0 # 這裡的 720 是判斷是否加價的門檻，維持不變或需確認
+                    pkg_cost_total = (nat_net_total / std_spots) * target_spots * discount * mult
 
                 for reg in display_regions:
-                    list_price = db.get(reg, [0,0])[0] if cfg["is_national"] else db[reg][0]
-                    rate_val = int(round((list_price / 720.0) * target_spots * discount))
+                    # 使用 Net Price (index 1) 計算各區域顯示金額
+                    # 如果是全省打包，這裡算出的是該區域分攤的 Net
+                    # 如果是區域購買，這裡算出的就是該區域的 Net
+                    reg_net_total = db.get(reg, [0,0])[1] if cfg["is_national"] else db[reg][1]
+                    rate_val = int(round((reg_net_total / std_spots) * target_spots * discount))
                     
                     real_c = int(round(combined_unit_net * target_spots)) if (not cfg["is_national"] or reg == "北區") else 0
                     pkg_val_if_nat = int(round(pkg_cost_total)) if (cfg["is_national"] and reg == "北區") else 0
@@ -236,6 +245,9 @@ if sum(m["share"] for m in config_media.values()) > 0:
                     prog_name = STORE_COUNTS.get(reg, reg)
                     if m_type == "新鮮視": prog_name = STORE_COUNTS.get(f"新鮮視_{reg}", reg)
                     
+                    # 顯示邏輯：
+                    # 全省打包 -> 顯示全省總價 (pkg_val_if_nat)
+                    # 區域購買 -> 顯示該區域價 (rate_val)
                     if cfg["is_national"]:
                          pkg_display_val = pkg_val_if_nat
                     else:
@@ -265,6 +277,10 @@ if sum(m["share"] for m in config_media.values()) > 0:
                 if target_spots == 0: target_spots = 2
 
                 sch = calculate_schedule(target_spots, days_count)
+                
+                # 家樂福 Rate Net 顯示邏輯：List Price / 720 (若維持原邏輯)
+                # 若要改成 Net，則直接用 Net Unit * spots
+                # 這裡假設 rate (Net) 欄位顯示 List 換算，Package-cost 顯示 Net
                 rate_hyp = int(round((db["量販_全省"]["List"]/720.0)*target_spots*discount))
                 rate_sup = int(round((db["超市_全省"]["List"]/720.0)*target_spots*discount))
                 
@@ -301,7 +317,7 @@ grand_total = media_total + prod_cost + vat
 discount_ratio_str = f"{(total_budget_input / grand_total * 100):.1f}%" if grand_total > 0 else "N/A"
 
 # ==========================================
-# 4. 生成 HTML 預覽 (高對比 + 不透明優化)
+# 4. 生成 HTML 預覽
 # ==========================================
 
 def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_data):
@@ -317,7 +333,6 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
     
     for i in range(days_cnt):
         wd = curr.weekday()
-        # 週末使用暖黃色 header-yellow
         cls = "header-yellow" if wd >= 5 else "header-blue"
         date_header_row2 += f"<th class='{cls}'>{curr.day}</th>"
         date_header_row3 += f"<th class='{cls}'>{weekdays_map[wd]}</th>"
@@ -338,7 +353,7 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
         
         for k in range(group_size):
             r_data = rows[i+k]
-            tr = "<tr>" # CSS 會處理 nth-child 背景色
+            tr = "<tr>"
             if k == 0:
                 tr += f"<td rowspan='{group_size}' class='align-left'>{m_name}</td>"
             
@@ -371,8 +386,7 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
     
     total_rate_display = sum(r['rate_net'] for r in rows)
 
-    # 關鍵修正：確保所有背景都是不透明顏色 (Solid Colors) 以阻擋深色模式
-    # 文字強制黑色 (#000)
+    # CSS 保持高對比 + 不透明
     css_style = """
     <style>
         .preview-table {
@@ -380,44 +394,25 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
             border-collapse: collapse;
             font-family: "Microsoft JhengHei", "Arial", sans-serif;
             font-size: 13px;
-            color: #000; /* 強制全黑字體 */
+            color: #000;
             min-width: 1200px;
-            background-color: #ffffff; /* 強制白底，避免透明 */
+            background-color: #ffffff;
         }
         .preview-table th, .preview-table td {
-            border: 1px solid #555; /* 深灰色格線，對比更強 */
+            border: 1px solid #555;
             padding: 8px;
             text-align: center;
             vertical-align: middle;
         }
-        /* 表頭：深藍底白字 */
         .header-blue { background-color: #2c3e50; color: white !important; font-weight: bold; }
-        
-        /* 週末：暖黃色底黑字 */
         .header-yellow { background-color: #f1c40f; color: #000 !important; font-weight: bold; }
-        
-        /* 檔次：淡黃底黑字 */
         .cell-yellow { background-color: #fff3cd; color: #000 !important; font-weight: bold; }
-        
-        /* 總計列：淺綠底黑字 */
         .row-total { background-color: #d4edda; color: #000 !important; font-weight: bold; }
-        
-        /* Grand Total：亮黃底黑字 (改為黃色以增加對比) */
-        .row-grand-total { 
-            background-color: #ffc107; /* Amber Color */
-            color: #000 !important; /* 強制黑字，避免淺色字看不見 */
-            font-weight: bold; 
-            font-size: 15px; 
-            border-top: 2px solid #000; /* 頂部加粗線 */
-        }
-        
+        .row-grand-total { background-color: #ffc107; color: #000 !important; font-weight: bold; font-size: 15px; border-top: 2px solid #000; }
         .align-left { text-align: left; }
         .align-right { text-align: right; }
-        
-        /* 斑馬紋：強制不透明背景 */
-        tr { background-color: #ffffff; } /* 預設白底 */
-        tr:nth-child(even) { background-color: #f2f2f2; } /* 偶數淺灰底 */
-        tr:hover { background-color: #e6f7ff; } /* 滑過變色 */
+        tr:nth-child(even) { background-color: #f2f2f2; }
+        tr:hover { background-color: #e6f7ff; }
     </style>
     """
 
