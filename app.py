@@ -1,260 +1,456 @@
 import streamlit as st
 import pandas as pd
-import io
-import xlsxwriter
-from datetime import timedelta, date, datetime
+import math
+from datetime import timedelta, datetime
 
 # ==========================================
-# 0. 系統設定
+# 1. 基礎資料與設定 (Configuration)
 # ==========================================
-st.set_page_config(page_title="東吳媒體 Cue 表生成系統", layout="wide")
 
-# 預設單價 (可替換為真實邏輯)
-UNIT_PRICES = {
-    "全家便利商店": {"10s": 150, "15s": 200, "20s": 260},
-    "全家新鮮視": {"10s": 400, "15s": 500, "20s": 600},
-    "家樂福": {"10s": 130, "15s": 180, "20s": 230},
+# 2026 全家店數資料 (根據你的描述)
+STORE_COUNTS = {
+    "北區": "1649店", # 北北基 + 東 (依描述歸類，若有誤可調整)
+    "桃竹苗": "779店",
+    "中區": "839店",
+    "雲嘉南": "499店",
+    "高屏": "490店",
+    "東區": "181店",
+    "全省": "4437店" # 假設加總，或需填入官方數字
 }
 
+# 媒體選項
+MEDIA_OPTIONS = ["全家便利商店通路廣播廣告", "全家便利商店新鮮視", "家樂福"]
+REGIONS_FM = ["北區", "桃竹苗", "中區", "雲嘉南", "高屏", "東區", "全省"]
+DURATIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
+
+# --- [關鍵] 報價與折扣表 (請依照 Excel 2026 企頻報價填入真實數字) ---
+# 這裡我先用 0 或 10000 當作範例，你需要修改這裡
+PRICING_TABLE = {
+    "全家廣播": {
+        "北區": 100000, "桃竹苗": 50000, "中區": 60000, "雲嘉南": 40000, 
+        "高屏": 40000, "東區": 20000, "全省": 300000
+    },
+    "新鮮視": {
+        "北區": 120000, "桃竹苗": 60000, "中區": 70000, "雲嘉南": 50000, 
+        "高屏": 50000, "東區": 25000, "全省": 350000
+    },
+    "家樂福": {
+        "全省量販": 150000, 
+        "全省超市": 80000
+    }
+}
+
+# 秒數折扣表 (秒數: 折扣率) - 範例數據
+DISCOUNT_TABLE = {
+    5: 0.5, 10: 0.6, 15: 0.7, 20: 0.8, 30: 1.0, 
+    40: 1.3, 60: 2.0
+}
+
+def get_discount(seconds):
+    """取得秒數折扣，若無對應秒數則找大一階的"""
+    sorted_secs = sorted(DISCOUNT_TABLE.keys())
+    for s in sorted_secs:
+        if s >= seconds:
+            return DISCOUNT_TABLE[s]
+    return 1.0 # fallback
+
+def get_store_count_text(region):
+    if region == "北區": return f"北北基 {STORE_COUNTS['北區']}"
+    if region == "桃竹苗": return f"桃竹苗 {STORE_COUNTS['桃竹苗']}"
+    if region == "中區": return f"中彰投 {STORE_COUNTS['中區']}"
+    if region == "雲嘉南": return f"雲嘉南 {STORE_COUNTS['雲嘉南']}"
+    if region == "高屏": return f"高高屏 {STORE_COUNTS['高屏']}"
+    if region == "東區": return f"宜花東 {STORE_COUNTS['東區']}"
+    return "全省門市"
+
 # ==========================================
-# 1. 核心邏輯：計算每日檔次
+# 2. 邏輯運算核心 (Logic Core)
 # ==========================================
-def calculate_schedule_data(start_d, end_d, budget_allocations):
+
+def calculate_spots_distribution(total_spots, days):
     """
-    依據預算分配，計算每一天的檔次
-    回傳: (DataFrame 用於顯示, List 用於 Excel 生成)
+    檔次分配邏輯：
+    1. 盡量平均
+    2. 盡量排偶數或是5的倍數
+    3. 前半多後半少
     """
-    days = (end_d - start_d).days + 1
+    if days == 0: return []
     
-    # 建立日期標題
-    date_cols = []
-    curr = start_d
-    for _ in range(days):
-        date_cols.append(curr)
-        curr += timedelta(days=1)
-
-    display_rows = []
-    excel_rows = []
+    base_avg = total_spots / days
+    schedule = [0] * days
+    remaining = total_spots
     
-    total_cost_final = 0
+    # 初步分配策略：優先滿足偶數邏輯
+    # 這裡使用一個啟發式算法
+    for i in range(days):
+        # 簡單算法：先求平均，然後嘗試變成偶數
+        if i < days // 2: # 前半段
+            val = math.ceil(remaining / (days - i))
+        else:
+            val = math.floor(remaining / (days - i))
+        
+        # 調整為偶數 (若 val 是奇數，加 1 或 減 1)
+        if val % 2 != 0 and val > 1:
+            if remaining - (val + 1) >= 0:
+                val += 1
+            else:
+                val -= 1
+        
+        # 邊界檢查
+        if val <= 0 and remaining > 0: val = 1
+        if val > remaining: val = remaining
+        
+        schedule[i] = val
+        remaining -= val
+        
+    # 如果還有剩餘，從前面開始補
+    i = 0
+    while remaining > 0:
+        schedule[i] += 1
+        remaining -= 1
+        i = (i + 1) % days
+        
+    return schedule
 
-    for item in budget_allocations:
-        media = item['media']
-        sec = item['seconds']
-        budget = item['budget']
-        
-        if budget <= 0: continue
-        
-        # 取得單價
-        price = UNIT_PRICES.get(media, {}).get(sec, 0)
-        if price == 0: continue
-            
-        total_spots = int(budget / price)
-        actual_cost = total_spots * price
-        total_cost_final += actual_cost
-        
-        # 平均分配檔次 (模擬東吳 CSV 的每日數字)
-        base = total_spots // days
-        remainder = total_spots % days
-        
-        daily_spots = []
-        for i in range(days):
-            val = base + (1 if i < remainder else 0)
-            daily_spots.append(val)
-            
-        # 準備資料
-        row_data = {
-            "媒體": media,
-            "秒數": sec,
-            "總檔次": total_spots,
-            "費用": actual_cost
-        }
-        # 填入每日數據 (用於網頁顯示)
-        for i, d in enumerate(date_cols):
-            row_data[d.strftime('%m/%d')] = daily_spots[i]
-            
-        display_rows.append(row_data)
-        
-        # 準備 Excel 用資料 (保持原始型態)
-        excel_rows.append({
-            "media": media,
-            "sec": sec,
-            "total_spots": total_spots,
-            "cost": actual_cost,
-            "daily_spots": daily_spots
-        })
+def calculate_line_item(platform, region, seconds, allocated_budget, days_count):
+    """
+    計算單一列的數據：檔次、費用、Rate
+    """
+    # 1. 決定定價 (List Price)
+    list_price = 0
+    price_key = ""
+    if "廣播" in platform:
+        price_key = "全家廣播"
+    elif "新鮮視" in platform:
+        price_key = "新鮮視"
+    elif "家樂福" in platform:
+        # 家樂福特殊處理，這裡假設分配到的預算還要再拆給量販跟超市
+        # 為簡化，此函數只算單一細項，外層需呼叫兩次
+        price_key = "家樂福" 
 
-    return pd.DataFrame(display_rows), excel_rows, date_cols, total_cost_final
+    if platform == "家樂福(量販)":
+        list_price = PRICING_TABLE["家樂福"]["全省量販"]
+    elif platform == "家樂福(超市)":
+        list_price = PRICING_TABLE["家樂福"]["全省超市"]
+    else:
+        list_price = PRICING_TABLE.get(price_key, {}).get(region, 0)
 
-# ==========================================
-# 2. 東吳專屬 Excel 繪圖引擎 (重點！)
-# ==========================================
-def generate_dongwu_excel(client, start_d, end_d, data_rows, date_list):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        wb = writer.book
-        ws = wb.add_worksheet('東吳Cue表')
-        
-        # --- A. 定義樣式 (Styles) ---
-        # 標題樣式
-        fmt_title = wb.add_format({
-            'bold': True, 'font_size': 16, 'font_name': '微軟正黑體',
-            'align': 'center', 'valign': 'vcenter'
-        })
-        # 表頭樣式 (東吳風格：假設為深色底白字，或素雅風格)
-        fmt_header = wb.add_format({
-            'bold': True, 'font_size': 11, 'font_name': '微軟正黑體',
-            'bg_color': '#44546A', 'font_color': 'white',
-            'border': 1, 'align': 'center', 'valign': 'vcenter'
-        })
-        # 日期表頭 (直式或橫式)
-        fmt_date_header = wb.add_format({
-            'bold': True, 'font_size': 10, 'font_name': 'Arial',
-            'bg_color': '#D9E1F2', 'border': 1, 
-            'align': 'center', 'valign': 'vcenter', 'rotation': 90 # 日期轉直的比較省空間
-        })
-        # 一般文字格
-        fmt_text = wb.add_format({
-            'font_size': 11, 'font_name': '微軟正黑體',
-            'border': 1, 'align': 'center', 'valign': 'vcenter'
-        })
-        # 數字/金額格
-        fmt_num = wb.add_format({
-            'font_size': 11, 'font_name': 'Arial',
-            'border': 1, 'align': 'center', 'valign': 'vcenter',
-            'num_format': '#,##0'
-        })
-        # 金額格 (帶$)
-        fmt_currency = wb.add_format({
-            'font_size': 11, 'font_name': 'Arial',
-            'border': 1, 'align': 'center', 'valign': 'vcenter',
-            'num_format': '$#,##0'
-        })
-        # 資訊欄位 (左上角)
-        fmt_info = wb.add_format({
-            'font_size': 12, 'font_name': '微軟正黑體', 'bold': True
-        })
+    # 2. 取得折扣
+    disc = get_discount(seconds)
+    
+    # 3. 逆推檔次 (Target Spots)
+    # 公式：Cost = (Price / 720) * Spots * Disc * (1.1 if Package & Spots < 720)
+    # 簡化逆推：我們先忽略 1.1 的 Package 規則來算大概檔次，再微調
+    
+    base_unit_cost = (list_price / 720) * disc
+    if base_unit_cost == 0: return None # 避免除以零
 
-        # --- B. 繪製表頭資訊 (Header Info) ---
-        ws.merge_range('A1:H1', '媒體排程表 (Media Schedule)', fmt_title)
-        
-        ws.write('A3', f"客戶名稱：{client}", fmt_info)
-        ws.write('A4', f"走期：{start_d.strftime('%Y/%m/%d')} - {end_d.strftime('%Y/%m/%d')}", fmt_info)
-        
-        # --- C. 繪製表格欄位 (Table Headers) ---
-        # 固定欄位：媒體(A), 秒數(B), 總檔次(C), 費用(D)
-        start_row = 5
-        ws.write(start_row, 0, "媒體平台", fmt_header)
-        ws.write(start_row, 1, "秒數", fmt_header)
-        ws.write(start_row, 2, "總檔次", fmt_header)
-        ws.write(start_row, 3, "費用 (未稅)", fmt_header)
-        
-        # 動態日期欄位 (從 E 欄開始)
-        col_idx = 4
-        for d in date_list:
-            # 顯示格式：12/03 (三)
-            w_str = ["(一)","(二)","(三)","(四)","(五)","(六)","(日)"][d.weekday()]
-            d_str = f"{d.strftime('%m/%d')}\n{w_str}"
-            ws.write(start_row, col_idx, d_str, fmt_date_header)
-            col_idx += 1
+    target_spots = math.ceil(allocated_budget / base_unit_cost)
+    
+    # 4. 根據 Package 規則調整 (全家全省區)
+    is_fm_national = ("全家" in platform or "新鮮視" in platform) and region == "全省"
+    
+    # 迴圈微調以符合預算 (因為有 1.1 的跳變)
+    final_spots = target_spots
+    calculated_cost = 0
+    
+    while True:
+        multiplier = 1.0
+        if is_fm_national and final_spots < 720:
+            multiplier = 1.1
             
-        # --- D. 填入資料 (Data Rows) ---
-        curr_row = start_row + 1
-        for row in data_rows:
-            ws.write(curr_row, 0, row['media'], fmt_text)
-            ws.write(curr_row, 1, row['sec'], fmt_text)
-            ws.write(curr_row, 2, row['total_spots'], fmt_num)
-            ws.write(curr_row, 3, row['cost'], fmt_currency)
-            
-            # 填入每日檔次
-            daily_col = 4
-            for spots in row['daily_spots']:
-                # 0 顯示為 "-" 看起來比較乾淨，或顯示空白
-                val = spots if spots > 0 else "-"
-                ws.write(curr_row, daily_col, val, fmt_num)
-                daily_col += 1
-            
-            curr_row += 1
-            
-        # --- E. 調整欄寬 (Column Width) ---
-        ws.set_column('A:A', 20) # 媒體
-        ws.set_column('B:B', 10) # 秒數
-        ws.set_column('C:D', 15) # 檔次與費用
-        # 日期欄位設窄一點
-        ws.set_column(4, 4 + len(date_list), 5) 
+        calculated_cost = (list_price / 720) * final_spots * disc * multiplier
         
-        # --- F. 加上合計列 (Footer) ---
-        ws.write(curr_row, 0, "總計", fmt_header)
-        ws.write(curr_row, 1, "", fmt_header)
-        # Excel 公式 SUM
-        ws.write_formula(curr_row, 2, f"=SUM(C{start_row+2}:C{curr_row})", fmt_header)
-        ws.write_formula(curr_row, 3, f"=SUM(D{start_row+2}:D{curr_row})", fmt_header)
+        # 邏輯：費用要大於預算，且最好在 5% 以內 (這裡只確保大於預算)
+        if calculated_cost >= allocated_budget:
+            break
+        final_spots += 1
         
-        # 每日合計公式
-        for i in range(len(date_list)):
-            col_letter = xlsxwriter.utility.xl_col_to_name(4 + i)
-            ws.write_formula(curr_row, 4+i, f"=SUM({col_letter}{start_row+2}:{col_letter}{curr_row})", fmt_header)
-
-    output.seek(0)
-    return output
+    # 5. 格式化輸出資料
+    rate_net = calculated_cost # 這裡依照你的描述，Rate(Net)欄位顯示總金額
+    
+    # 每日檔次分配
+    daily_spots = calculate_spots_distribution(final_spots, days_count)
+    
+    return {
+        "platform": platform,
+        "region": region,
+        "seconds": seconds,
+        "spots": final_spots,
+        "total_cost": calculated_cost,
+        "daily_schedule": daily_spots,
+        "program": get_store_count_text(region) if "家樂福" not in platform else "全省",
+        "day_part": "07:00-23:00" if "廣播" in platform or "新鮮視" in platform else ("09:00-23:00" if "量販" in platform else "00:00-24:00"),
+        "is_package": is_fm_national and final_spots < 720
+    }
 
 # ==========================================
-# 3. UI 介面
+# 3. 前端介面 (UI)
 # ==========================================
-st.title("📄 東吳媒體 - 智慧 Cue 表生成器")
 
-# 左側：輸入條件
+st.set_page_config(layout="wide", page_title="Cue Sheet Generator")
+
+st.title("媒體 Cue 表生成器 (Beta)")
+st.markdown("目標：模擬 Excel 邏輯，自動分配預算並生成報表。")
+
 with st.sidebar:
-    st.header("1. 基礎設定")
-    client_name = st.text_input("客戶名稱", "東吳測試專案")
+    st.header("1. 基本資料")
+    client_name = st.text_input("客戶名稱", "範例客戶")
+    start_date = st.date_input("走期開始日", datetime.today())
+    end_date = st.date_input("走期結束日", datetime.today() + timedelta(days=13))
     
-    c1, c2 = st.columns(2)
-    start_date = c1.date_input("開始日期", date.today())
-    end_date = c2.date_input("結束日期", date.today() + timedelta(days=29))
+    if start_date > end_date:
+        st.error("結束日期必須晚於開始日期")
+        days_count = 0
+    else:
+        days_count = (end_date - start_date).days + 1
+        st.info(f"走期共 {days_count} 天")
+
+    total_budget = st.number_input("總預算 (未稅)", value=500000, step=10000)
+
+st.header("2. 媒體投放設定")
+
+# 儲存使用者的選擇
+selections = []
+
+# --- 全家廣播 ---
+with st.expander("全家便利商店通路廣播廣告", expanded=True):
+    fm_radio_on = st.checkbox("購買全家廣播")
+    if fm_radio_on:
+        fm_regions = st.multiselect("廣播-區域 (可多選)", REGIONS_FM, default=["全省"])
+        fm_secs = st.multiselect("廣播-秒數", DURATIONS, default=[20])
+        fm_budget_alloc = st.slider("廣播-預算佔比 (%)", 0, 100, 50)
+        selections.append({
+            "type": "全家廣播",
+            "regions": fm_regions,
+            "seconds": fm_secs,
+            "budget_percent": fm_budget_alloc
+        })
+
+# --- 全家新鮮視 ---
+with st.expander("全家便利商店新鮮視"):
+    fv_on = st.checkbox("購買新鮮視")
+    if fv_on:
+        fv_regions = st.multiselect("新鮮視-區域 (可多選)", REGIONS_FM, default=["全省"])
+        fv_secs = st.multiselect("新鮮視-秒數", DURATIONS, default=[10])
+        fv_budget_alloc = st.slider("新鮮視-預算佔比 (%)", 0, 100, 30)
+        selections.append({
+            "type": "新鮮視",
+            "regions": fv_regions,
+            "seconds": fv_secs,
+            "budget_percent": fv_budget_alloc
+        })
+
+# --- 家樂福 ---
+with st.expander("家樂福"):
+    carrefour_on = st.checkbox("購買家樂福")
+    if carrefour_on:
+        st.write("區域：固定為全省 (包含量販與超市)")
+        cf_secs = st.multiselect("家樂福-秒數", DURATIONS, default=[10])
+        cf_budget_alloc = st.slider("家樂福-預算佔比 (%)", 0, 100, 20)
+        selections.append({
+            "type": "家樂福",
+            "regions": ["全省"], # 邏輯上雖然分量販超市，但預算分配算一次
+            "seconds": cf_secs,
+            "budget_percent": cf_budget_alloc
+        })
+
+# ==========================================
+# 4. 運算與生成 (Execution)
+# ==========================================
+
+if st.button("生成 Cue 表"):
+    # 1. 檢查輸入
+    if not selections:
+        st.error("請至少選擇一種媒體")
+        st.stop()
+
+    # 2. 預算分配計算
+    line_items = []
     
-    st.header("2. 預算分配")
-    # 模擬輸入介面
-    budget_fm = st.number_input("全家便利商店 (預算)", 0, 1000000, 165000, step=1000)
-    sec_fm = st.selectbox("全家秒數", ["10s", "15s", "20s"], index=1)
+    # 正規化預算比例 (若總和不為100，則按比例縮放，或直接用輸入值)
+    total_percent = sum(s["budget_percent"] for s in selections)
     
-    budget_fv = st.number_input("全家新鮮視 (預算)", 0, 1000000, 165000, step=1000)
-    sec_fv = st.selectbox("新鮮視秒數", ["10s", "15s", "20s"], index=1)
+    grand_total_calculated = 0
+    production_cost = 10000
     
-    budget_cf = st.number_input("家樂福 (預算)", 0, 1000000, 57800, step=1000)
-    sec_cf = st.selectbox("家樂福秒數", ["10s", "15s", "20s"], index=2)
+    all_seconds_set = set()
+    selected_mediums = set()
 
-    # 選擇下載格式 (未來擴充用)
-    st.divider()
-    format_type = st.selectbox("選擇匯出格式", ["東吳-格式", "聲活-格式(開發中)"])
+    for sel in selections:
+        # 該媒體總預算
+        if total_percent > 0:
+            media_budget = total_budget * (sel["budget_percent"] / total_percent)
+        else:
+            media_budget = 0
+            
+        # 該媒體下的細項數 (區域數 * 秒數種類)
+        # 備註：家樂福雖然選全省，但會生成 量販+超市 兩條
+        sub_items_count = 0
+        if sel["type"] == "家樂福":
+            sub_items_count = len(sel["seconds"]) * 2 # 量販+超市
+        else:
+            sub_items_count = len(sel["regions"]) * len(sel["seconds"])
+            
+        if sub_items_count == 0: continue
 
-# 整合輸入資料
-allocations = [
-    {"media": "全家便利商店", "budget": budget_fm, "seconds": sec_fm},
-    {"media": "全家新鮮視", "budget": budget_fv, "seconds": sec_fv},
-    {"media": "家樂福", "budget": budget_cf, "seconds": sec_cf},
-]
-
-# 執行計算
-df_display, excel_rows, date_list, total_cost = calculate_schedule_data(start_date, end_date, allocations)
-
-# 右側：預覽與下載
-st.subheader(f"📊 {client_name} - 排程預覽")
-st.metric("專案總金額", f"${total_cost:,}")
-
-if not df_display.empty:
-    st.dataframe(df_display, use_container_width=True)
-    
-    # 生成 Excel
-    if format_type == "東吳-格式":
-        excel_file = generate_dongwu_excel(client_name, start_date, end_date, excel_rows, date_list)
-        file_name = f"Cue_{client_name}_東吳版.xlsx"
+        # 平均分配預算給每個細項 (也可改為讓業務針對細項微調，這裡先平均)
+        item_budget = media_budget / sub_items_count
         
-        st.download_button(
-            label="📥 下載 Excel (東吳專用格式)",
-            data=excel_file,
-            file_name=file_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
-        )
-else:
-    st.info("請在左側輸入預算以產生報表")
+        # 紀錄 Header 用
+        selected_mediums.add("全家便利商店通路廣播廣告" if sel["type"]=="全家廣播" else ("全家便利商店新鮮視" if sel["type"]=="新鮮視" else "家樂福"))
+        for s in sel["seconds"]:
+            all_seconds_set.add(f"{s}秒")
+
+        # 生成細項
+        for sec in sel["seconds"]:
+            if sel["type"] == "家樂福":
+                # 家樂福強制生成兩條
+                item1 = calculate_line_item("家樂福(量販)", "全省", sec, item_budget, days_count)
+                item2 = calculate_line_item("家樂福(超市)", "全省", sec, item_budget, days_count)
+                if item1: line_items.append(item1)
+                if item2: line_items.append(item2)
+            else:
+                platform_name = "全家便利商店通路廣播廣告" if sel["type"] == "全家廣播" else "全家便利商店新鮮視"
+                for reg in sel["regions"]:
+                    item = calculate_line_item(platform_name, reg, sec, item_budget, days_count)
+                    if item: line_items.append(item)
+
+    # 3. 計算總金額
+    items_total = sum(item["total_cost"] for item in line_items)
+    vat = (items_total + production_cost) * 0.05
+    grand_total = items_total + production_cost + vat
+    
+    # 折扣顯示 (給業務看)
+    discount_val = grand_total - (total_budget * 1.05) # 粗略估算
+    
+    st.success(f"計算完成！ 預算: {total_budget:,} | 媒體費用(未稅): {int(items_total):,} | 總計(含稅): {int(grand_total):,}")
+    
+    # ==========================================
+    # 5. HTML 表格生成 (Output)
+    # ==========================================
+    
+    # 準備日期 Header
+    date_headers = ""
+    current = start_date
+    for i in range(days_count):
+        date_str = current.strftime("%m/%d")
+        date_headers += f"<th class='date-col'>{date_str}</th>"
+        current += timedelta(days=1)
+
+    # 準備內容 Rows
+    rows_html = ""
+    for idx, item in enumerate(line_items):
+        daily_cells = ""
+        for spots in item["daily_schedule"]:
+            daily_cells += f"<td class='schedule-cell'>{spots}</td>"
+            
+        # 處理 Packge Cost 顯示邏輯
+        package_note = "(Package)" if item["is_package"] else ""
+        
+        rows_html += f"""
+        <tr>
+            <td style='text-align:left;'>{item['platform']}</td>
+            <td>{item['region']}</td>
+            <td>{item['program']}</td>
+            <td>{item['day_part']}</td>
+            <td>{item['seconds']}</td>
+            {daily_cells}
+            <td style='font-weight:bold;'>{item['spots']}</td>
+            <td style='text-align:right;'>{int(item['total_cost']):,}<br><span style='font-size:10px'>{package_note}</span></td>
+        </tr>
+        """
+
+    # 準備 Header 資訊
+    product_str = "、".join(sorted(list(all_seconds_set)))
+    medium_str = "、".join(list(selected_mediums))
+    period_str = f"{start_date.strftime('%Y/%m/%d')} ~ {end_date.strftime('%Y/%m/%d')}"
+
+    # CSS 樣式 (模仿 Excel)
+    html_template = f"""
+    <style>
+        .cue-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'Arial', 'Microsoft JhengHei', sans-serif;
+            font-size: 12px;
+        }}
+        .cue-table th, .cue-table td {{
+            border: 1px solid #000;
+            padding: 4px;
+            text-align: center;
+        }}
+        .header-section {{
+            background-color: #f0f0f0; /* 淺灰底 */
+            text-align: left;
+        }}
+        .col-header {{
+            background-color: #d9e1f2; /* Excel 藍色 header */
+            font-weight: bold;
+        }}
+        .date-col {{
+            background-color: #d9e1f2;
+            writing-mode: vertical-rl; /* 直式日期 */
+            transform: rotate(180deg);
+            min-width: 25px;
+        }}
+        .schedule-cell {{
+            background-color: #fff;
+        }}
+        .total-row {{
+            background-color: #ffffcc; /* 淺黃底 */
+            font-weight: bold;
+        }}
+    </style>
+
+    <div style="border: 2px solid #000; padding: 10px; background: white;">
+        <table class="cue-table">
+            <tr>
+                <td colspan="5" class="header-section" style="border:none;">
+                    <b>Client：</b>{client_name}<br>
+                    <b>Product：</b>{product_str}<br>
+                    <b>Period：</b>{period_str}<br>
+                    <b>Medium：</b>{medium_str}
+                </td>
+                <td colspan="{days_count + 2}" style="border:none;"></td>
+            </tr>
+            
+            <tr class="col-header">
+                <th>Station</th>
+                <th>Location</th>
+                <th>Program</th>
+                <th>Day-part</th>
+                <th>Size</th>
+                {date_headers}
+                <th>Total<br>Spots</th>
+                <th>Rate (Net)</th>
+            </tr>
+            
+            {rows_html}
+            
+            <tr class="total-row">
+                <td colspan="5" style="text-align:right;">Media Total</td>
+                <td colspan="{days_count}"></td>
+                <td>{sum(i['spots'] for i in line_items)}</td>
+                <td style="text-align:right;">{int(items_total):,}</td>
+            </tr>
+            <tr>
+                <td colspan="5" style="text-align:right;">Production Cost</td>
+                <td colspan="{days_count + 2}" style="text-align:right;">{production_cost:,}</td>
+            </tr>
+            <tr>
+                <td colspan="5" style="text-align:right;">5% VAT</td>
+                <td colspan="{days_count + 2}" style="text-align:right;">{int(vat):,}</td>
+            </tr>
+            <tr class="total-row" style="font-size:14px; border-top: 2px double #000;">
+                <td colspan="5" style="text-align:right;">Grand Total</td>
+                <td colspan="{days_count + 2}" style="text-align:right;">NT$ {int(grand_total):,}</td>
+            </tr>
+        </table>
+    </div>
+    """
+    
+    st.markdown("### 預覽 Cue 表")
+    st.components.v1.html(html_template, height=600, scrolling=True)
+    
+    st.info("提示：若要調整金額，請調整上方的「預算佔比」或「總預算」，系統會自動重新計算檔次。")
