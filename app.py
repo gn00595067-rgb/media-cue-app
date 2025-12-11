@@ -82,8 +82,7 @@ def calculate_schedule(total_spots, days):
 # 2. UI 設定
 # ==========================================
 
-st.set_page_config(layout="wide", page_title="Cue Sheet Generator v5")
-# 注入 CSS 以優化滑桿顏色與表格樣式
+st.set_page_config(layout="wide", page_title="Cue Sheet Generator v6")
 st.markdown("""
 <style>
     .reportview-container { margin-top: -2em; }
@@ -91,16 +90,17 @@ st.markdown("""
     footer {visibility: hidden;}
     .stProgress > div > div > div > div { background-color: #ff4b4b; }
     
-    /* 預覽表格 CSS */
+    /* 預覽表格 CSS - 加強格線 */
     .preview-table {
         width: 100%;
         border-collapse: collapse;
         font-family: "Arial", "Microsoft JhengHei", sans-serif;
         font-size: 11px;
+        color: #000;
     }
     .preview-table th, .preview-table td {
-        border: 1px solid #888;
-        padding: 4px;
+        border: 1px solid #444 !important; /* 強制深色格線 */
+        padding: 5px;
         text-align: center;
     }
     .header-blue { background-color: #DDEBF7; font-weight: bold; }
@@ -306,26 +306,20 @@ discount_ratio_str = f"{(total_budget_input / grand_total * 100):.1f}%" if grand
 # ==========================================
 
 def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, totals_data):
-    # 準備日期標頭
-    date_header_row1 = "" # 月份
-    date_header_row2 = "" # 日期
-    date_header_row3 = "" # 星期
+    date_header_row1 = f"<th class='header-blue' colspan='{days_cnt}'>{start_dt.month}月</th>"
+    date_header_row2 = ""
+    date_header_row3 = ""
     
     curr = start_dt
     weekdays_map = ["一", "二", "三", "四", "五", "六", "日"]
     
-    # 簡單起見，月份放在第一格 (實際應用可合併)
-    date_header_row1 = f"<th class='header-blue' colspan='{days_cnt}'>{start_dt.month}月</th>"
-    
     for i in range(days_cnt):
         wd = curr.weekday()
-        # 週末使用黃底
         cls = "header-yellow" if wd >= 5 else "header-blue"
         date_header_row2 += f"<th class='{cls}'>{curr.day}</th>"
         date_header_row3 += f"<th class='{cls}'>{weekdays_map[wd]}</th>"
         curr += timedelta(days=1)
         
-    # 生成資料列
     data_rows_html = ""
     i = 0
     while i < len(rows):
@@ -335,21 +329,16 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
             j += 1
         group_size = j - i
         
-        # 處理 Station 名稱
         m_name = row['media']
         if "全家廣播" in m_name: m_name = "全家便利商店<br>通路廣播廣告"
         if "新鮮視" in m_name: m_name = "全家便利商店<br>新鮮視廣告"
         
-        # 迭代群組內每一行
         for k in range(group_size):
             r_data = rows[i+k]
             tr = "<tr>"
-            
-            # 第一行才顯示 Rowspan 的欄位
             if k == 0:
                 tr += f"<td rowspan='{group_size}' class='align-left'>{m_name}</td>"
             
-            # Location 特殊處理
             loc_txt = r_data['location']
             if "北北基" in loc_txt and "廣播" in r_data['media']: loc_txt = "北區-北北基+東"
             
@@ -359,28 +348,22 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
             tr += f"<td>{r_data['seconds']}秒</td>"
             tr += f"<td class='align-right'>{int(r_data['rate_net']):,}</td>"
             
-            # Package Cost (合併或獨立)
             if row['is_pkg_start']:
                 if k == 0:
                     tr += f"<td rowspan='{group_size}' class='align-right'>{int(row['pkg_cost']):,}</td>"
             elif not row['is_pkg_member']:
-                # 家樂福放這裡
                 val = int(r_data['real_cost']) if "家樂福" in r_data['media'] else ""
                 val_str = f"{val:,}" if val != "" else ""
                 tr += f"<td class='align-right'>{val_str}</td>"
             
-            # 日期排程
             for s_val in r_data['schedule']:
                 tr += f"<td>{s_val}</td>"
                 
-            # 檔次
             tr += f"<td class='cell-yellow'>{r_data['spots']}</td>"
             tr += "</tr>"
             data_rows_html += tr
-            
         i = j
 
-    # 組合完整 Table HTML
     html = f"""
     <div style="overflow-x: auto;">
         <table class="preview-table">
@@ -394,7 +377,8 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
                 <td colspan="{days_cnt + 3}" style="border:none;"></td>
             </tr>
             <tr>
-                <th colspan="7"></th> {date_header_row1}
+                <th colspan="7"></th>
+                {date_header_row1}
                 <th></th>
             </tr>
             <tr>
@@ -411,9 +395,7 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
             <tr>
                 {date_header_row3}
             </tr>
-            
             {data_rows_html}
-            
             <tr>
                 <td colspan="5" class="align-right">Total</td>
                 <td class="align-right">{sum(r['rate_net'] for r in rows):,}</td>
@@ -441,12 +423,131 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
     """
     return html
 
-def generate_excel_download(rows, days_cnt, start_dt, c_name, products, mediums, totals_data):
+def generate_excel(rows, days_cnt, start_dt, c_name, products, mediums, totals_data):
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
     worksheet = workbook.add_worksheet("Media Schedule")
-    # ... (Excel 生成邏輯與之前相同，這裡簡化以節省篇幅，實際執行請保留上一版的 generate_excel 函數) ...
-    # 為了確保功能完整，這裡直接使用簡化版調用，若需完整 Excel 功能請將上一段程式碼的 generate_excel 貼回來
+
+    fmt_title = workbook.add_format({'font_size': 18, 'bold': True, 'align': 'center'})
+    fmt_header_left = workbook.add_format({'align': 'left', 'valign': 'top', 'bold': True})
+    fmt_col_header = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#DDEBF7', 'text_wrap': True, 'font_size': 10})
+    fmt_date_wk = workbook.add_format({'font_size': 9, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#DDEBF7'})
+    fmt_date_we = workbook.add_format({'font_size': 9, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#FFF2CC'}) 
+    
+    fmt_cell = workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1, 'font_size': 10})
+    fmt_cell_left = workbook.add_format({'align': 'left', 'valign': 'vcenter', 'border': 1, 'font_size': 10, 'text_wrap': True})
+    fmt_num = workbook.add_format({'align': 'right', 'valign': 'vcenter', 'border': 1, 'num_format': '#,##0', 'font_size': 10})
+    fmt_spots = workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1, 'bold': True, 'bg_color': '#FFF2CC', 'font_size': 10})
+    
+    worksheet.merge_range('A1:AJ1', "Media Schedule", fmt_title)
+    
+    info = [
+        ("客戶名稱：", c_name),
+        ("Product：", products),
+        ("Period :", f"{start_dt.strftime('%Y. %m. %d')} - {end_date.strftime('%Y. %m. %d')}"),
+        ("Medium :", mediums)
+    ]
+    for i, (label, val) in enumerate(info):
+        worksheet.write(2+i, 0, label, fmt_header_left)
+        worksheet.write(2+i, 1, val, fmt_header_left)
+
+    worksheet.write(6, 6, f"{start_dt.month}月", fmt_cell)
+    weekdays = ["一", "二", "三", "四", "五", "六", "日"]
+    curr = start_dt
+    for i in range(days_cnt):
+        col_idx = 7 + i
+        wd = curr.weekday()
+        fmt = fmt_date_we if wd >= 5 else fmt_date_wk
+        worksheet.write(7, col_idx, curr.day, fmt)
+        worksheet.write(8, col_idx, weekdays[wd], fmt)
+        curr += timedelta(days=1)
+
+    headers = ["Station", "Location", "Program", "Day-part", "Size", "rate (Net)", "Package-cost\n(Net)"]
+    for i, h in enumerate(headers):
+        worksheet.write(8, i, h, fmt_col_header)
+    
+    last_col = 7 + days_cnt
+    worksheet.write(8, last_col, "檔次", fmt_col_header)
+
+    current_row = 9
+    i = 0
+    while i < len(rows):
+        row = rows[i]
+        j = i + 1
+        while j < len(rows) and rows[j]['media'] == row['media'] and rows[j]['seconds'] == row['seconds']:
+            j += 1
+        group_size = j - i
+        
+        m_name = row['media']
+        if "全家廣播" in m_name: m_name = "全家便利商店\n通路廣播廣告"
+        if "新鮮視" in m_name: m_name = "全家便利商店\n新鮮視廣告"
+        
+        if group_size > 1:
+            worksheet.merge_range(current_row, 0, current_row + group_size - 1, 0, m_name, fmt_cell_left)
+        else:
+            worksheet.write(current_row, 0, m_name, fmt_cell_left)
+            
+        for k in range(group_size):
+            r_data = rows[i + k]
+            r_idx = current_row + k
+            
+            loc_txt = r_data['location']
+            if "北北基" in loc_txt and "廣播" in r_data['media']: loc_txt = "北區-北北基+東"
+            
+            worksheet.write(r_idx, 1, loc_txt, fmt_cell)
+            worksheet.write(r_idx, 2, r_data['program'], fmt_cell)
+            worksheet.write(r_idx, 3, r_data['daypart'], fmt_cell)
+            worksheet.write(r_idx, 4, f"{r_data['seconds']}秒", fmt_cell)
+            worksheet.write(r_idx, 5, r_data['rate_net'], fmt_num)
+            
+            for d_idx, s_val in enumerate(r_data['schedule']):
+                worksheet.write(r_idx, 7 + d_idx, s_val, fmt_cell)
+                
+            worksheet.write(r_idx, last_col, r_data['spots'], fmt_spots)
+
+        if row['is_pkg_start']:
+            if group_size > 1:
+                worksheet.merge_range(current_row, 6, current_row + group_size - 1, 6, row['pkg_cost'], fmt_num)
+            else:
+                worksheet.write(current_row, 6, row['pkg_cost'], fmt_num)
+        elif not row['is_pkg_member']:
+             for k in range(group_size):
+                 if "家樂福" in rows[i+k]['media']:
+                     worksheet.write(current_row + k, 6, rows[i+k]['real_cost'], fmt_num) 
+                 else:
+                     worksheet.write(current_row + k, 6, "", fmt_num)
+
+        current_row += group_size
+        i = j
+
+    worksheet.write(current_row, 2, "Total", fmt_cell)
+    worksheet.write(current_row, 5, sum(r['rate_net'] for r in rows), fmt_num)
+    worksheet.write(current_row, 6, totals_data['media_total'], fmt_num)
+    
+    total_spots_daily = [0] * days_cnt
+    for r in rows:
+        for idx, val in enumerate(r['schedule']):
+            total_spots_daily[idx] += val
+    for idx, val in enumerate(total_spots_daily):
+        worksheet.write(current_row, 7+idx, val, fmt_cell)
+    worksheet.write(current_row, last_col, sum(r['spots'] for r in rows), fmt_cell)
+    
+    current_row += 1
+    worksheet.write(current_row, 6, "製作", fmt_cell)
+    worksheet.write(current_row, 7, totals_data['prod_cost'], fmt_num)
+    current_row += 1
+    worksheet.write(current_row, 6, "5% VAT", fmt_cell)
+    worksheet.write(current_row, 7, totals_data['vat'], fmt_num)
+    current_row += 1
+    worksheet.write(current_row, 6, "Grand Total", fmt_cell)
+    worksheet.write(current_row, 7, totals_data['grand_total'], fmt_num)
+
+    worksheet.set_column('A:A', 20)
+    worksheet.set_column('B:B', 15)
+    worksheet.set_column('C:E', 12)
+    worksheet.set_column('F:G', 12)
+    worksheet.set_column(7, last_col, 4)
+
     workbook.close()
     return output
 
@@ -471,6 +572,12 @@ if final_rows:
     html_preview = generate_html_preview(final_rows, days_count, start_date, client_name, product_str, medium_str, totals)
     st.components.v1.html(html_preview, height=600, scrolling=True)
 
-    # 下載按鈕 (需搭配完整 generate_excel 函數)
-    # 這裡為了展示方便，僅保留按鈕 UI，實際運作請確保 generate_excel 函數存在
-    st.button("📥 下載 Excel 報表 (功能整合中)")
+    # 下載按鈕
+    xlsx_data = generate_excel(final_rows, days_count, start_date, client_name, product_str, medium_str, totals)
+    
+    st.download_button(
+        label="📥 下載 Excel Cue表 (.xlsx)",
+        data=xlsx_data.getvalue(),
+        file_name=f"CueSheet_{client_name}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
