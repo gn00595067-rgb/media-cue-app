@@ -6,7 +6,7 @@ import xlsxwriter
 from datetime import timedelta, datetime
 
 # ==========================================
-# 1. 基礎資料與設定
+# 1. 基礎資料與設定 (含 2026 報價與折扣係數)
 # ==========================================
 
 STORE_COUNTS = {
@@ -29,9 +29,10 @@ STORE_COUNTS = {
 REGIONS_ORDER = ["北區", "桃竹苗", "中區", "雲嘉南", "高屏", "東區"]
 DURATIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
 
+# 價格資料庫 (依據 2026 企頻報價)
 PRICING_DB = {
     "全家廣播": {
-        "Std_Spots": 480,
+        "Std_Spots": 480, # 基準檔次
         "全省": [400000, 320000], 
         "北區": [250000, 200000], "桃竹苗": [150000, 120000],
         "中區": [150000, 120000], "雲嘉南": [100000, 80000], 
@@ -50,7 +51,19 @@ PRICING_DB = {
     }
 }
 
-DISCOUNT_TABLE = {5: 0.5, 10: 0.6, 15: 0.7, 20: 0.8, 25: 0.9, 30: 1.0, 35: 1.15, 40: 1.3, 45: 1.5, 60: 2.0}
+# 秒數折扣係數表 (Duration Factor)
+DISCOUNT_TABLE = {
+    5: 0.5,   # 5秒打5折
+    10: 0.6,  # 10秒打6折
+    15: 0.7,
+    20: 0.8,  # 20秒打8折 (非 0.66)
+    25: 0.9,
+    30: 1.0,  # 基準
+    35: 1.15,
+    40: 1.3,
+    45: 1.5,
+    60: 2.0
+}
 
 def get_discount(seconds):
     if seconds in DISCOUNT_TABLE: return DISCOUNT_TABLE[seconds]
@@ -60,33 +73,28 @@ def get_discount(seconds):
 
 def calculate_schedule(total_spots, days):
     """
-    優化排程邏輯：
-    1. 前提：total_spots 已經是偶數 (由外部邏輯保證)。
-    2. 邏輯：先將總數除以2，分配給每一天(前多後少)，然後再將每天的數字乘以2。
-    3. 結果：保證每天都是偶數，且呈現 44, 44, 42, 42 這種穩定遞減，不會跳動。
+    黃金版排程邏輯：
+    1. 總數除以2，分配給每一天 (半數分配法)。
+    2. 再將每天數字乘以2，保證每天都是偶數且遞減平滑 (44, 44, 42, 42)。
     """
     if days == 0: return []
     
     half_spots = total_spots // 2
     schedule = [0] * days
     
-    # 基礎平均 (半數)
     base = half_spots // days
     for i in range(days): schedule[i] = base
     
-    # 餘數分配 (半數的餘數) - 優先給前面
     remaining = half_spots % days
     for i in range(remaining):
         schedule[i] += 1
         
-    # 還原為雙倍 (保證偶數)
     final_schedule = [x * 2 for x in schedule]
     
-    # 二次檢查 (理論上不需要，但為了安全)
+    # 安全檢查補償
     current_sum = sum(final_schedule)
     diff = total_spots - current_sum
     if diff > 0:
-        # 萬一有誤差，補在第一天
         final_schedule[0] += diff
         
     return final_schedule
@@ -110,10 +118,10 @@ st.markdown("""
         font-family: "Arial", "Microsoft JhengHei", sans-serif;
         font-size: 11px;
         color: #000;
-        border: 2px solid #000; /* 外框加粗 */
+        border: 2px solid #000; 
     }
     .preview-table th, .preview-table td {
-        border: 1px solid #000 !important; /* 強制黑色實線 */
+        border: 1px solid #000 !important;
         padding: 5px;
         text-align: center;
     }
@@ -125,7 +133,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("媒體 Cue 表生成器")
+st.title("媒體 Cue 表生成器 (2026 企頻版)")
 
 with st.sidebar:
     st.header("1. 基本資料")
@@ -152,6 +160,7 @@ with col_m1:
         is_nat = st.checkbox("全省聯播", value=True, key="fm_nat")
         regs = ["全省"] if is_nat else st.multiselect("區域", REGIONS_ORDER, key="fm_reg")
         _secs_input = st.multiselect("秒數", DURATIONS, default=[20], key="fm_sec")
+        # 這裡的排序僅影響 UI 顯示，最後報表會再排一次
         secs = sorted(_secs_input)
         share = st.slider("廣播-預算佔比%", 0, remaining_global_share, min(70, remaining_global_share), key="fm_share")
         remaining_global_share -= share
@@ -228,9 +237,8 @@ if cf_data: config_media["家樂福"] = cf_data
 final_rows = []
 all_secs = set()
 all_media = set()
-total_share_sum = sum(m["share"] for m in config_media.values())
 
-if total_share_sum > 0:
+if sum(m["share"] for m in config_media.values()) > 0:
     for m_type, cfg in config_media.items():
         media_budget = total_budget_input * (cfg["share"] / 100.0)
         all_media.add(m_type)
@@ -255,13 +263,11 @@ if total_share_sum > 0:
                 
                 if combined_unit_net == 0: continue
                 
-                # [修改] 檔次計算：無條件進位，且若為奇數則+1變偶數
+                # 檔次計算 (強制偶數)
                 target_spots = math.ceil(sec_budget / combined_unit_net)
-                if target_spots % 2 != 0:
-                    target_spots += 1 # 強制偶數
-                if target_spots == 0: target_spots = 2 # 至少2檔
+                if target_spots % 2 != 0: target_spots += 1 
+                if target_spots == 0: target_spots = 2
                 
-                # [修改] 排程使用新演算法 (半數分配法)
                 daily_sch = calculate_schedule(target_spots, days_count)
                 
                 pkg_cost_total = 0
@@ -272,7 +278,6 @@ if total_share_sum > 0:
 
                 for reg in display_regions:
                     list_price = db.get(reg, [0,0])[0] if cfg["is_national"] else db[reg][0]
-                    # [修改] 金額四捨五入取整
                     rate_val = int(round((list_price / 720.0) * target_spots * discount))
                     
                     real_c = int(round(combined_unit_net * target_spots)) if (not cfg["is_national"] or reg == "北區") else 0
@@ -297,15 +302,11 @@ if total_share_sum > 0:
                 unit_sup = db["超市_全省"]["Net_Unit"] * discount
                 combined = unit_hyp + unit_sup
                 
-                # [修改] 檔次計算：強制偶數
                 target_spots = math.ceil(sec_budget / combined)
-                if target_spots % 2 != 0:
-                    target_spots += 1
+                if target_spots % 2 != 0: target_spots += 1
                 if target_spots == 0: target_spots = 2
 
                 sch = calculate_schedule(target_spots, days_count)
-                
-                # [修改] 金額四捨五入取整
                 rate_hyp = int(round((db["量販_全省"]["List"]/720.0)*target_spots*discount))
                 rate_sup = int(round((db["超市_全省"]["List"]/720.0)*target_spots*discount))
                 
@@ -324,10 +325,19 @@ if total_share_sum > 0:
                     "real_cost": int(round(unit_sup * target_spots))
                 })
 
-# 計算總金額
-# 為了避免顯示金額加總不一致，我們這裡使用顯示在表格上的 rate_net (或 real_cost) 進行加總
-# 在全省包的情況下，rate_net 是 list price 算出來的，不能直接加
-# 我們用 real_cost 確保是實收
+# 【排序邏輯修正】
+# 1. Medium 順序：永遠照 全家廣播 -> 新鮮視 -> 家樂福
+media_order_map = {"全家廣播": 1, "新鮮視": 2, "家樂福": 3}
+final_rows.sort(key=lambda x: media_order_map.get(x['media'], 99))
+
+# 2. Product 標題字串排序：依數字大小 (5秒, 10秒...)
+# 從 all_secs ("20秒", "5秒") 中提取數字並排序
+def parse_sec_int(s):
+    return int(s.replace("秒", ""))
+sorted_secs_list = sorted(list(all_secs), key=parse_sec_int)
+product_str = "、".join(sorted_secs_list)
+
+
 media_total = sum(r["real_cost"] for r in final_rows)
 prod_cost = 10000
 vat = int(round((media_total + prod_cost) * 0.05))
@@ -335,10 +345,14 @@ grand_total = media_total + prod_cost + vat
 discount_ratio_str = f"{(total_budget_input / grand_total * 100):.1f}%" if grand_total > 0 else "N/A"
 
 # ==========================================
-# 4. 生成高還原度 HTML 預覽
+# 4. 生成 HTML 預覽
 # ==========================================
 
-def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, totals_data):
+def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_data):
+    # Medium 字串也依照固定順序產生
+    used_media = sorted(list(set(r['media'] for r in rows)), key=lambda x: media_order_map.get(x, 99))
+    mediums_str = "、".join(used_media)
+
     date_header_row1 = f"<th class='header-blue' colspan='{days_cnt}'>{start_dt.month}月</th>"
     date_header_row2 = ""
     date_header_row3 = ""
@@ -358,6 +372,7 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
     while i < len(rows):
         row = rows[i]
         j = i + 1
+        # 分組邏輯：同媒體 & 同秒數 視為一組 (因為已排好序，直接往下找即可)
         while j < len(rows) and rows[j]['media'] == row['media'] and rows[j]['seconds'] == row['seconds']:
             j += 1
         group_size = j - i
@@ -379,7 +394,7 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
             tr += f"<td>{r_data['program']}</td>"
             tr += f"<td>{r_data['daypart']}</td>"
             tr += f"<td>{r_data['seconds']}秒</td>"
-            tr += f"<td class='align-right'>{r_data['rate_net']:,}</td>" # 確保無小數
+            tr += f"<td class='align-right'>{r_data['rate_net']:,}</td>"
             
             if row['is_pkg_start']:
                 if k == 0:
@@ -397,7 +412,6 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
             data_rows_html += tr
         i = j
     
-    # 計算顯示用的 Total Rate (Net)
     total_rate_display = sum(r['rate_net'] for r in rows)
 
     html = f"""
@@ -408,7 +422,7 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
                     <b>客戶名稱：</b> {c_name}<br>
                     <b>Product：</b> {products}<br>
                     <b>Period：</b> {start_dt.strftime('%Y. %m. %d')} - {end_date.strftime('%Y. %m. %d')}<br>
-                    <b>Medium：</b> {mediums}
+                    <b>Medium：</b> {mediums_str}
                 </td>
                 <td colspan="{days_cnt + 3}" style="border:none;"></td>
             </tr>
@@ -459,7 +473,10 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, mediums, t
     """
     return html
 
-def generate_excel(rows, days_cnt, start_dt, c_name, products, mediums, totals_data):
+def generate_excel(rows, days_cnt, start_dt, c_name, products, totals_data):
+    used_media = sorted(list(set(r['media'] for r in rows)), key=lambda x: media_order_map.get(x, 99))
+    mediums = "、".join(used_media)
+    
     output = io.BytesIO()
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
     worksheet = workbook.add_worksheet("Media Schedule")
@@ -472,7 +489,6 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, mediums, totals_d
     
     fmt_cell = workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1, 'font_size': 10})
     fmt_cell_left = workbook.add_format({'align': 'left', 'valign': 'vcenter', 'border': 1, 'font_size': 10, 'text_wrap': True})
-    # [修改] Excel 格式不顯示小數
     fmt_num = workbook.add_format({'align': 'right', 'valign': 'vcenter', 'border': 1, 'num_format': '#,##0', 'font_size': 10})
     fmt_spots = workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1, 'bold': True, 'bg_color': '#FFF2CC', 'font_size': 10})
     
@@ -601,16 +617,14 @@ m3.metric("預算/表價比 (折扣率)", discount_ratio_str)
 st.markdown("### 4. Cue 表網頁預覽")
 
 if final_rows:
-    product_str = "、".join(sorted(list(all_secs)))
-    medium_str = "、".join(list(all_media))
     totals = {"media_total": media_total, "prod_cost": prod_cost, "vat": vat, "grand_total": grand_total}
     
     # 生成並顯示 HTML
-    html_preview = generate_html_preview(final_rows, days_count, start_date, client_name, product_str, medium_str, totals)
+    html_preview = generate_html_preview(final_rows, days_count, start_date, client_name, product_str, totals)
     st.components.v1.html(html_preview, height=600, scrolling=True)
 
     # 下載按鈕
-    xlsx_data = generate_excel(final_rows, days_count, start_date, client_name, product_str, medium_str, totals)
+    xlsx_data = generate_excel(final_rows, days_count, start_date, client_name, product_str, totals)
     
     st.download_button(
         label="📥 下載 Excel Cue表 (.xlsx)",
