@@ -32,7 +32,7 @@ DURATIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
 # 價格資料庫 (依據 2026 企頻報價)
 PRICING_DB = {
     "全家廣播": {
-        "Std_Spots": 480, # 基準檔次
+        "Std_Spots": 480,
         "全省": [400000, 320000], 
         "北區": [250000, 200000], "桃竹苗": [150000, 120000],
         "中區": [150000, 120000], "雲嘉南": [100000, 80000], 
@@ -51,19 +51,8 @@ PRICING_DB = {
     }
 }
 
-# 秒數折扣係數表 (Duration Factor)
-DISCOUNT_TABLE = {
-    5: 0.5,   
-    10: 0.6,  
-    15: 0.7,
-    20: 0.8, 
-    25: 0.9,
-    30: 1.0, 
-    35: 1.15,
-    40: 1.3,
-    45: 1.5,
-    60: 2.0
-}
+# 秒數折扣係數表
+DISCOUNT_TABLE = {5: 0.5, 10: 0.6, 15: 0.7, 20: 0.8, 25: 0.9, 30: 1.0, 35: 1.15, 40: 1.3, 45: 1.5, 60: 2.0}
 
 def get_discount(seconds):
     if seconds in DISCOUNT_TABLE: return DISCOUNT_TABLE[seconds]
@@ -72,28 +61,17 @@ def get_discount(seconds):
     return 1.0
 
 def calculate_schedule(total_spots, days):
-    """
-    黃金版排程邏輯：偶數分配
-    """
     if days == 0: return []
-    
     half_spots = total_spots // 2
     schedule = [0] * days
-    
     base = half_spots // days
     for i in range(days): schedule[i] = base
-    
     remaining = half_spots % days
-    for i in range(remaining):
-        schedule[i] += 1
-        
+    for i in range(remaining): schedule[i] += 1
     final_schedule = [x * 2 for x in schedule]
-    
     current_sum = sum(final_schedule)
     diff = total_spots - current_sum
-    if diff > 0:
-        final_schedule[0] += diff
-        
+    if diff > 0: final_schedule[0] += diff
     return final_schedule
 
 # ==========================================
@@ -101,88 +79,7 @@ def calculate_schedule(total_spots, days):
 # ==========================================
 
 st.set_page_config(layout="wide", page_title="Cue Sheet Generator Final")
-st.markdown("""
-<style>
-    .reportview-container { margin-top: -2em; }
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    .stProgress > div > div > div > div { background-color: #ff4b4b; }
-    
-    /* === 手機版表格視覺優化核心區 === */
-    .preview-table {
-        width: 100%;
-        border-collapse: collapse; /* 讓邊框合併，不留白 */
-        font-family: "Microsoft JhengHei", "Arial", sans-serif;
-        font-size: 14px; /* 字體加大方便閱讀 */
-        color: #333;
-        background-color: white;
-    }
-    
-    /* 儲存格設定 */
-    .preview-table th, .preview-table td {
-        border: 1px solid #999 !important; /* 格線顏色加深 */
-        padding: 10px 6px; /* 增加間距，手指比較好點 */
-        text-align: center;
-        vertical-align: middle;
-    }
-
-    /* 表頭：亮眼深藍底 + 白字 */
-    .header-blue { 
-        background-color: #2c3e50 !important; 
-        color: white !important; 
-        font-weight: bold; 
-        font-size: 14px;
-        white-space: nowrap; /* 不自動換行 */
-    }
-
-    /* 週末：暖黃色底 (區隔平日) */
-    .header-yellow { 
-        background-color: #f1c40f !important; 
-        color: #333 !important;
-        font-weight: bold; 
-    }
-
-    /* 斑馬紋：偶數行顯示淺灰色底，讓橫向閱讀不跑偏 */
-    tr:nth-child(even) {
-        background-color: #f8f9fa; 
-    }
-    
-    /* 滑鼠滑過/手指點擊時變色 */
-    tr:hover {
-        background-color: #e8f4f8 !important;
-    }
-
-    /* 檔次欄位：淡黃色突顯 */
-    .cell-yellow { 
-        background-color: #fff3cd !important; 
-        font-weight: bold; 
-        color: #856404;
-    }
-
-    /* 總計列：淺綠色底，強調金額 */
-    .row-total { 
-        background-color: #d4edda !important; 
-        font-weight: bold; 
-        color: #155724;
-    }
-
-    /* Grand Total：深綠色底 + 白字 */
-    .row-grand-total { 
-        background-color: #28a745 !important; 
-        color: white !important; 
-        font-weight: bold; 
-        font-size: 16px;
-    }
-    
-    .align-left { text-align: left !important; }
-    .align-right { text-align: right !important; }
-    
-    /* 輸入區塊樣式 */
-    .stBlock-container { padding-top: 1rem; }
-</style>
-""", unsafe_allow_html=True)
-
-st.title("📺 媒體 Cue 表生成器 (高對比色彩版)")
+st.title("📺 媒體 Cue 表生成器 (顯色修復版)")
 
 # --- 1. 基本資料 (移至主畫面) ---
 with st.container():
@@ -404,7 +301,7 @@ grand_total = media_total + prod_cost + vat
 discount_ratio_str = f"{(total_budget_input / grand_total * 100):.1f}%" if grand_total > 0 else "N/A"
 
 # ==========================================
-# 4. 生成 HTML 預覽 (高對比版)
+# 4. 生成 HTML 預覽 (CSS 樣式已內嵌，確保不會被擋)
 # ==========================================
 
 def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_data):
@@ -473,17 +370,48 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
     
     total_rate_display = sum(r['rate_net'] for r in rows)
 
+    # 關鍵修正：將 CSS 樣式直接寫在 HTML 字串中，確保 iframe 內部能讀取
+    css_style = """
+    <style>
+        .preview-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: "Microsoft JhengHei", "Arial", sans-serif;
+            font-size: 13px;
+            color: #333;
+            min-width: 1200px; /* 強制寬度，觸發橫向捲動 */
+        }
+        .preview-table th, .preview-table td {
+            border: 1px solid #999;
+            padding: 8px;
+            text-align: center;
+            vertical-align: middle;
+        }
+        .header-blue { background-color: #2c3e50; color: white; font-weight: bold; }
+        .header-yellow { background-color: #f1c40f; color: #333; font-weight: bold; }
+        .cell-yellow { background-color: #fff3cd; font-weight: bold; color: #856404; }
+        .row-total { background-color: #d4edda; font-weight: bold; color: #155724; }
+        .row-grand-total { background-color: #28a745; color: white; font-weight: bold; font-size: 15px; }
+        .align-left { text-align: left; }
+        .align-right { text-align: right; }
+        /* 斑馬紋 */
+        tr:nth-child(even) { background-color: #f8f9fa; }
+        tr:hover { background-color: #e8f4f8; }
+    </style>
+    """
+
     html = f"""
-    <div style="overflow-x: auto;">
+    {css_style}
+    <div style="overflow-x: auto; width: 100%;">
         <table class="preview-table">
             <tr>
-                <td colspan="5" class="align-left" style="border:none; background-color:#fff;">
+                <td colspan="5" class="align-left" style="background-color:#fff; border:none;">
                     <b>客戶名稱：</b> {c_name}<br>
                     <b>Product：</b> {products}<br>
                     <b>Period：</b> {start_dt.strftime('%Y. %m. %d')} - {end_date.strftime('%Y. %m. %d')}<br>
                     <b>Medium：</b> {mediums_str}
                 </td>
-                <td colspan="{days_cnt + 3}" style="border:none; background-color:#fff;"></td>
+                <td colspan="{days_cnt + 3}" style="background-color:#fff; border:none;"></td>
             </tr>
             <tr>
                 <th colspan="7" style="border:none;"></th>
@@ -540,7 +468,6 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, totals_data):
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
     worksheet = workbook.add_worksheet("Media Schedule")
 
-    # 保持原有的 Excel 樣式
     fmt_title = workbook.add_format({'font_size': 18, 'bold': True, 'align': 'center'})
     fmt_header_left = workbook.add_format({'align': 'left', 'valign': 'top', 'bold': True})
     fmt_col_header = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#4472C4', 'font_color': 'white', 'text_wrap': True, 'font_size': 10})
