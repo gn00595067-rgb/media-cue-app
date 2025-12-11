@@ -80,10 +80,10 @@ def calculate_schedule(total_spots, days):
 # 2. UI 設定
 # ==========================================
 
-st.set_page_config(layout="wide", page_title="Cue Sheet Generator v3")
+st.set_page_config(layout="wide", page_title="Cue Sheet Generator v4")
 st.markdown("""<style>.reportview-container { margin-top: -2em; } #MainMenu {visibility: hidden;} footer {visibility: hidden;}</style>""", unsafe_allow_html=True)
 
-st.title("媒體 Cue 表生成器 (Live Edit)")
+st.title("媒體 Cue 表生成器 (瀑布式預算連動版)")
 
 with st.sidebar:
     st.header("1. 基本資料")
@@ -95,114 +95,135 @@ with st.sidebar:
     total_budget_input = st.number_input("總預算 (未稅)", value=500000, step=10000)
 
 config_media = {}
-st.subheader("2. 媒體投放設定")
+st.subheader("2. 媒體投放設定 (自動連動總和 100%)")
+
+# --------------------------------------------------------
+# Step 1: 先定義使用者想開啟哪些媒體
+# (為了讓版面整齊，我們把「是否開啟」的開關先放在上面，或直接在 Column 裡處理)
+# 但為了做「連動計算」，我們必須在 render slider 之前知道有哪些媒體是 active 的
+# --------------------------------------------------------
+
+# 這裡使用 Session State 或簡單的變數流
+# 為了 UX，我們還是保持三欄佈局，但邏輯上我們依序扣除剩餘預算
+
 col_m1, col_m2, col_m3 = st.columns(3)
 
-# --------------------------
-# 全家廣播 (UI 修改重點)
-# --------------------------
+# 變數：剩餘可分配的媒體總預算 (Global Share)
+remaining_global_share = 100 
+
+# --- 全家廣播 (優先權 1) ---
 with col_m1:
-    if st.checkbox("開啟全家廣播", key="fm_act"):
+    fm_act = st.checkbox("開啟全家廣播", value=True, key="fm_act")
+    fm_data = None
+    
+    if fm_act:
+        st.markdown("---")
         is_nat = st.checkbox("全省聯播", value=True, key="fm_nat")
         regs = ["全省"] if is_nat else st.multiselect("區域", REGIONS_ORDER, key="fm_reg")
         
-        # [修改 1] 加入 sorted() 強制由小到大排序
+        # [修改] 秒數由小排到大
         _secs_input = st.multiselect("秒數", DURATIONS, default=[20], key="fm_sec")
-        secs = sorted(_secs_input) 
+        secs = sorted(_secs_input)
         
-        share = st.slider("廣播-預算佔比%", 0, 100, 40, key="fm_share")
+        # [修改] 媒體預算佔比 - 瀑布式邏輯
+        # 廣播是第一個，所以它可以選 0 到 100
+        share = st.slider("廣播-總預算佔比%", 0, remaining_global_share, min(40, remaining_global_share), key="fm_share")
+        remaining_global_share -= share # 扣除廣播用掉的
+        
+        # [修改] 秒數預算佔比
         sec_shares = {}
-        
-        # [修改 2] 顯示秒數比例分配的邏輯優化
         if len(secs) > 1:
-            st.markdown("---")
-            st.caption("各秒數預算比例分配")
+            st.caption("各秒數佔比 (自動連動)")
             ls = 100
-            # 只顯示前 N-1 個滑桿
             for i, s in enumerate(secs[:-1]):
                 v = st.slider(f"{s}秒佔比", 0, ls, int(ls/2), key=f"fm_s_{s}")
-                sec_shares[s] = v
-                ls -= v
-            
-            # 最後一個秒數顯示為資訊卡，避免隱形
-            last_sec = secs[-1]
-            sec_shares[last_sec] = ls
-            st.info(f"🔹 {last_sec}秒: {ls}% (剩餘自動填滿)")
-            
+                sec_shares[s] = v; ls -= v
+            # 最後一個
+            sec_shares[secs[-1]] = ls
+            st.info(f"🔹 {secs[-1]}秒: {ls}% (餘額)")
         elif secs: 
             sec_shares[secs[0]] = 100
             
-        config_media["全家廣播"] = {"is_national": is_nat, "regions": regs, "seconds": secs, "share": share, "sec_shares": sec_shares}
+        fm_data = {"is_national": is_nat, "regions": regs, "seconds": secs, "share": share, "sec_shares": sec_shares}
 
-# --------------------------
-# 新鮮視 (UI 修改重點)
-# --------------------------
+# --- 新鮮視 (優先權 2) ---
 with col_m2:
-    if st.checkbox("開啟新鮮視", key="fv_act"):
+    fv_act = st.checkbox("開啟新鮮視", value=True, key="fv_act")
+    fv_data = None
+    
+    if fv_act:
+        st.markdown("---")
         is_nat = st.checkbox("全省聯播", value=True, key="fv_nat")
         regs = ["全省"] if is_nat else st.multiselect("區域", REGIONS_ORDER, key="fv_reg")
         
-        # [修改 1] 強制排序
         _secs_input = st.multiselect("秒數", DURATIONS, default=[10], key="fv_sec")
         secs = sorted(_secs_input)
         
-        share = st.slider("新鮮視-預算佔比%", 0, 100, 30, key="fv_share")
-        sec_shares = {}
+        # [修改] 媒體預算佔比 - 瀑布式邏輯
+        # 新鮮視只能選「剩下」的
+        # 如果剩下 0，就強制 0
+        if remaining_global_share > 0:
+            share = st.slider("新鮮視-總預算佔比%", 0, remaining_global_share, min(30, remaining_global_share), key="fv_share")
+        else:
+            share = 0
+            st.warning("預算已在廣播分配完畢 (0%)")
+            
+        remaining_global_share -= share # 扣除新鮮視用掉的
         
-        # [修改 2] 顯示剩餘
+        sec_shares = {}
         if len(secs) > 1:
-            st.markdown("---")
-            st.caption("各秒數預算比例分配")
+            st.caption("各秒數佔比 (自動連動)")
             ls = 100
             for i, s in enumerate(secs[:-1]):
                 v = st.slider(f"{s}秒佔比", 0, ls, int(ls/2), key=f"fv_s_{s}")
-                sec_shares[s] = v
-                ls -= v
-            
-            last_sec = secs[-1]
-            sec_shares[last_sec] = ls
-            st.info(f"🔹 {last_sec}秒: {ls}% (剩餘自動填滿)")
-            
+                sec_shares[s] = v; ls -= v
+            sec_shares[secs[-1]] = ls
+            st.info(f"🔹 {secs[-1]}秒: {ls}% (餘額)")
         elif secs: 
             sec_shares[secs[0]] = 100
-            
-        config_media["新鮮視"] = {"is_national": is_nat, "regions": regs, "seconds": secs, "share": share, "sec_shares": sec_shares}
+        
+        fv_data = {"is_national": is_nat, "regions": regs, "seconds": secs, "share": share, "sec_shares": sec_shares}
 
-# --------------------------
-# 家樂福 (UI 修改重點)
-# --------------------------
+# --- 家樂福 (優先權 3 - 撿剩的) ---
 with col_m3:
-    if st.checkbox("開啟家樂福", key="cf_act"):
+    cf_act = st.checkbox("開啟家樂福", key="cf_act")
+    cf_data = None
+    
+    if cf_act:
+        st.markdown("---")
         st.write("區域：全省")
         
-        # [修改 1] 強制排序
         _secs_input = st.multiselect("秒數", DURATIONS, default=[10], key="cf_sec")
         secs = sorted(_secs_input)
         
-        share = st.slider("家樂福-預算佔比%", 0, 100, 30, key="cf_share")
-        sec_shares = {}
+        # [修改] 媒體預算佔比 - 瀑布式邏輯
+        # 家樂福自動接收所有剩下的
+        share = remaining_global_share
+        st.info(f"家樂福-總預算佔比: {share}% (自動填滿)")
+        # 無需 Slider，直接顯示
+        st.progress(share / 100.0 if share <= 100 else 1.0)
         
-        # [修改 2] 顯示剩餘
+        sec_shares = {}
         if len(secs) > 1:
-            st.markdown("---")
-            st.caption("各秒數預算比例分配")
+            st.caption("各秒數佔比 (自動連動)")
             ls = 100
             for i, s in enumerate(secs[:-1]):
                 v = st.slider(f"{s}秒佔比", 0, ls, int(ls/2), key=f"cf_s_{s}")
-                sec_shares[s] = v
-                ls -= v
-            
-            last_sec = secs[-1]
-            sec_shares[last_sec] = ls
-            st.info(f"🔹 {last_sec}秒: {ls}% (剩餘自動填滿)")
-            
+                sec_shares[s] = v; ls -= v
+            sec_shares[secs[-1]] = ls
+            st.info(f"🔹 {secs[-1]}秒: {ls}% (餘額)")
         elif secs: 
             sec_shares[secs[0]] = 100
             
-        config_media["家樂福"] = {"regions": ["全省"], "seconds": secs, "share": share, "sec_shares": sec_shares}
+        cf_data = {"regions": ["全省"], "seconds": secs, "share": share, "sec_shares": sec_shares}
+
+# 寫入設定檔
+if fm_data: config_media["全家廣播"] = fm_data
+if fv_data: config_media["新鮮視"] = fv_data
+if cf_data: config_media["家樂福"] = cf_data
 
 # ==========================================
-# 3. 計算邏輯 (保持不變 - Ceil 版本)
+# 3. 計算邏輯 (保持不變)
 # ==========================================
 
 final_rows = []
@@ -210,9 +231,20 @@ all_secs = set()
 all_media = set()
 total_share_sum = sum(m["share"] for m in config_media.values())
 
+# 注意：因為我們的 UI 邏輯強制總和為 100 (如果有開家樂福的話)，或者小於等於 100
+# 所以這裡的 total_share_sum 應該就是 100 (除非只開了廣播選50%)
+# 如果只開廣播選 50%，剩下的 50% 就不會被計算。這符合邏輯（部分預算不使用）。
+
 if total_share_sum > 0:
     for m_type, cfg in config_media.items():
-        media_budget = total_budget_input * (cfg["share"] / total_share_sum)
+        # 分配金額
+        if total_share_sum == 100:
+            media_budget = total_budget_input * (cfg["share"] / 100.0)
+        else:
+            # 如果使用者只選了廣播 50% 且沒開其他，這裡我們假設他是想用 50% 的總預算
+            # 或者是 正規化? 通常是直接乘比例
+            media_budget = total_budget_input * (cfg["share"] / 100.0)
+            
         all_media.add(m_type)
         
         for sec, sec_share in cfg["sec_shares"].items():
