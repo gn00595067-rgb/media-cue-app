@@ -108,7 +108,7 @@ st.markdown("""
     footer {visibility: hidden;}
     .stProgress > div > div > div > div { background-color: #ff4b4b; }
     
-    /* 預覽表格 CSS - 加強黑色格線 */
+    /* 預覽表格 CSS */
     .preview-table {
         width: 100%;
         border-collapse: collapse;
@@ -130,7 +130,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("媒體 Cue 表生成器 (修正金額加總版)")
+st.title("媒體 Cue 表生成器 (Package Cost 修復版)")
 
 with st.sidebar:
     st.header("1. 基本資料")
@@ -275,19 +275,38 @@ if sum(m["share"] for m in config_media.values()) > 0:
                     list_price = db.get(reg, [0,0])[0] if cfg["is_national"] else db[reg][0]
                     rate_val = int(round((list_price / 720.0) * target_spots * discount))
                     
+                    # Real Cost: 單一區域的實際成本 (無論是否打包，都先算出來)
                     real_c = int(round(combined_unit_net * target_spots)) if (not cfg["is_national"] or reg == "北區") else 0
-                    pkg_val = int(round(pkg_cost_total)) if (cfg["is_national"] and reg == "北區") else 0
+                    
+                    # Package Cost: 只有在全省打包時，且是第一列才顯示打包價
+                    pkg_val_if_nat = int(round(pkg_cost_total)) if (cfg["is_national"] and reg == "北區") else 0
                     
                     prog_name = STORE_COUNTS.get(reg, reg)
                     if m_type == "新鮮視": prog_name = STORE_COUNTS.get(f"新鮮視_{reg}", reg)
                     
+                    # 決定 Package-cost 欄位要顯示什麼
+                    # 邏輯：如果是打包 -> 顯示打包價 (只在第一行)
+                    # 邏輯：如果不是打包 -> 顯示個別區域的 real_cost (其實就是 rate net adjusted)
+                    # 為了方便後續處理，我們在這裡先計算出每個 row 應該顯示的 pkg_display_val
+                    
+                    if cfg["is_national"]:
+                         # 打包模式：只有第一列顯示打包價，其他為0
+                         pkg_display_val = pkg_val_if_nat
+                    else:
+                         # 區域模式：顯示該區域的實際成本 (通常在報價單邏輯下，區域單買的 Rate Net = Package Cost)
+                         # 這裡我們使用 list_price 算出來的 rate_val 作為區域購買的 Package Cost
+                         pkg_display_val = rate_val
+
                     final_rows.append({
                         "media": m_type, "region": reg, 
                         "location": f"{reg.replace('區', '')}區-{reg}" if m_type=="全家廣播" else f"{reg.replace('區', '')}區-{reg}",
                         "program": prog_name, "daypart": "00:00-24:00" if m_type=="全家廣播" else "07:00-22:00",
                         "seconds": sec, "schedule": daily_sch, "spots": target_spots,
-                        "rate_net": rate_val, "pkg_cost": pkg_val, 
-                        "is_pkg_start": (cfg["is_national"] and reg == "北區"), "is_pkg_member": cfg["is_national"], 
+                        "rate_net": rate_val, 
+                        "pkg_cost": pkg_val_if_nat, # 這是原始計算的打包價
+                        "pkg_display_val": pkg_display_val, # 這是修正後要顯示在 Excel 的值
+                        "is_pkg_start": (cfg["is_national"] and reg == "北區"), 
+                        "is_pkg_member": cfg["is_national"], 
                         "real_cost": real_c
                     })
 
@@ -309,14 +328,16 @@ if sum(m["share"] for m in config_media.values()) > 0:
                     "media": "家樂福", "region": "全省量販", "location": "全省量販", "program": "67店",
                     "daypart": "09:00-23:00", "seconds": sec, "schedule": sch, "spots": target_spots,
                     "rate_net": rate_hyp,
-                    "pkg_cost": 0, "is_pkg_start": False, "is_pkg_member": False, 
+                    "pkg_cost": 0, "pkg_display_val": int(round(unit_hyp * target_spots)),
+                    "is_pkg_start": False, "is_pkg_member": False, 
                     "real_cost": int(round(unit_hyp * target_spots))
                 })
                 final_rows.append({
                     "media": "家樂福", "region": "全省超市", "location": "全省超市", "program": "250店",
                     "daypart": "00:00-24:00", "seconds": sec, "schedule": sch, "spots": target_spots,
                     "rate_net": rate_sup,
-                    "pkg_cost": 0, "is_pkg_start": False, "is_pkg_member": False, 
+                    "pkg_cost": 0, "pkg_display_val": int(round(unit_sup * target_spots)),
+                    "is_pkg_start": False, "is_pkg_member": False, 
                     "real_cost": int(round(unit_sup * target_spots))
                 })
 
@@ -324,13 +345,15 @@ if sum(m["share"] for m in config_media.values()) > 0:
 media_order_map = {"全家廣播": 1, "新鮮視": 2, "家樂福": 3}
 final_rows.sort(key=lambda x: media_order_map.get(x['media'], 99))
 
-# 【Product 標題排序：數字小的在前】
+# 【Product 標題排序】
 def parse_sec_int(s):
     return int(s.replace("秒", ""))
 sorted_secs_list = sorted(list(all_secs), key=parse_sec_int)
 product_str = "、".join(sorted_secs_list)
 
-media_total = sum(r["real_cost"] for r in final_rows)
+# 修正 Total 計算邏輯：使用 pkg_display_val 加總，確保與 Excel 欄位一致
+media_total = sum(r["pkg_display_val"] for r in final_rows if not r['is_pkg_member'] or r['is_pkg_start'])
+
 prod_cost = 10000
 vat = int(round((media_total + prod_cost) * 0.05))
 grand_total = media_total + prod_cost + vat
@@ -386,17 +409,18 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
             tr += f"<td>{r_data['seconds']}秒</td>"
             tr += f"<td class='align-right'>{r_data['rate_net']:,}</td>"
             
-            # 【HTML 修正：Package Cost 欄位】
+            # 【HTML 顯示邏輯修正】
             if row['is_pkg_start']:
+                # 是打包組的第一列 (顯示打包價)
                 if k == 0:
-                    tr += f"<td rowspan='{group_size}' class='align-right'>{row['pkg_cost']:,}</td>"
+                    tr += f"<td rowspan='{group_size}' class='align-right'>{row['pkg_display_val']:,}</td>"
             elif row['is_pkg_member']:
-                # 若是 Package 成員但非 Start，不顯示金額 (會被 rowspan 蓋過)
+                # 是打包組的其他列 (不顯示，被 rowspan 蓋過)
                 pass
             else:
-                # 獨立購買 (區域或家樂福)，直接顯示 real_cost
-                val = r_data['real_cost']
-                val_str = f"{val:,}" if val > 0 else ""
+                # 獨立購買 (區域或家樂福)，顯示個別價格
+                val = r_data['pkg_display_val']
+                val_str = f"{val:,}"
                 tr += f"<td class='align-right'>{val_str}</td>"
             
             for s_val in r_data['schedule']:
@@ -548,14 +572,14 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, totals_data):
             worksheet.write(r_idx, 4, f"{r_data['seconds']}秒", fmt_cell)
             worksheet.write(r_idx, 5, r_data['rate_net'], fmt_num)
             
-            # 【Excel 修正】：若非 Package Member，都要顯示 real_cost (包含廣播/新鮮視的區域單買)
+            # 【Excel 顯示修正】
             if r_data['is_pkg_start']:
                  if k == 0 and group_size > 1:
-                     worksheet.merge_range(current_row, 6, current_row + group_size - 1, 6, r_data['pkg_cost'], fmt_num)
+                     worksheet.merge_range(current_row, 6, current_row + group_size - 1, 6, r_data['pkg_display_val'], fmt_num)
                  elif k == 0:
-                     worksheet.write(r_idx, 6, r_data['pkg_cost'], fmt_num)
+                     worksheet.write(r_idx, 6, r_data['pkg_display_val'], fmt_num)
             elif not r_data['is_pkg_member']:
-                 worksheet.write(r_idx, 6, r_data['real_cost'], fmt_num)
+                 worksheet.write(r_idx, 6, r_data['pkg_display_val'], fmt_num)
 
             for d_idx, s_val in enumerate(r_data['schedule']):
                 worksheet.write(r_idx, 7 + d_idx, s_val, fmt_cell)
