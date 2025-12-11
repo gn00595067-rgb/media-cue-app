@@ -108,57 +108,75 @@ st.markdown("""
     footer {visibility: hidden;}
     .stProgress > div > div > div > div { background-color: #ff4b4b; }
     
-    /* 預覽表格 CSS */
+    /* 預覽表格 CSS - 加強配色與邊框 */
     .preview-table {
         width: 100%;
         border-collapse: collapse;
         font-family: "Arial", "Microsoft JhengHei", sans-serif;
-        font-size: 11px;
+        font-size: 13px; /* 字體稍微加大 */
         color: #000;
-        border: 2px solid #000; 
+        border: 2px solid #333; 
     }
     .preview-table th, .preview-table td {
-        border: 1px solid #000 !important;
-        padding: 5px;
+        border: 1px solid #666 !important;
+        padding: 8px;
         text-align: center;
     }
-    .header-blue { background-color: #DDEBF7; font-weight: bold; }
-    .header-yellow { background-color: #FFF2CC; }
+    /* 表頭：深藍色白字 */
+    .header-blue { background-color: #4472C4; color: white; font-weight: bold; }
+    /* 週末：暖黃色 */
+    .header-yellow { background-color: #FFD966; font-weight: bold; }
+    /* 檔次欄位：淡黃色 */
     .cell-yellow { background-color: #FFF2CC; font-weight: bold; }
+    /* 總計列：淺綠色 */
+    .row-total { background-color: #E2EFDA; font-weight: bold; }
+    /* Grand Total：深綠色白字 */
+    .row-grand-total { background-color: #548235; color: white; font-weight: bold; }
+    
     .align-left { text-align: left !important; }
     .align-right { text-align: right !important; }
+    
+    /* 輸入區塊樣式 */
+    .stBlock-container { padding-top: 1rem; }
+    .input-section { background-color: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #ddd; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("媒體 Cue 表生成器 (Package Cost 修復版)")
+st.title("📺 媒體 Cue 表生成器 (手機友善版)")
 
-with st.sidebar:
-    st.header("1. 基本資料")
-    client_name = st.text_input("客戶名稱", "萬國通路")
-    c1, c2 = st.columns(2)
-    start_date = c1.date_input("開始日", datetime(2025, 1, 1))
-    end_date = c2.date_input("結束日", datetime(2025, 1, 31))
-    days_count = (end_date - start_date).days + 1
-    total_budget_input = st.number_input("總預算 (未稅)", value=1140000, step=10000)
+# --- 1. 基本資料 (移至主畫面) ---
+with st.container():
+    st.markdown("### 1. 基本資料設定")
+    with st.expander("📝 點擊展開/收合基本資料", expanded=True):
+        col_b1, col_b2 = st.columns([1, 1])
+        with col_b1:
+            client_name = st.text_input("客戶名稱", "萬國通路")
+            start_date = st.date_input("開始日", datetime(2025, 1, 1))
+        with col_b2:
+            total_budget_input = st.number_input("總預算 (未稅)", value=1140000, step=10000)
+            end_date = st.date_input("結束日", datetime(2025, 1, 31))
+        
+        days_count = (end_date - start_date).days + 1
+        st.info(f"📅 走期共 **{days_count}** 天")
 
 # --- 2. 媒體設定 (瀑布流邏輯) ---
 config_media = {}
-st.subheader("2. 媒體投放設定 (連動總和 100%)")
+st.markdown("### 2. 媒體投放設定 (連動總和 100%)")
 
 col_m1, col_m2, col_m3 = st.columns(3)
 remaining_global_share = 100 
 
 # 全家廣播
 with col_m1:
-    fm_act = st.checkbox("開啟全家廣播", value=True, key="fm_act")
+    st.markdown("#### 📻 全家廣播")
+    fm_act = st.checkbox("開啟", value=True, key="fm_act")
     fm_data = None
     if fm_act:
-        st.markdown("---")
         is_nat = st.checkbox("全省聯播", value=True, key="fm_nat")
         regs = ["全省"] if is_nat else st.multiselect("區域", REGIONS_ORDER, key="fm_reg")
         _secs_input = st.multiselect("秒數", DURATIONS, default=[20], key="fm_sec")
         secs = sorted(_secs_input)
-        share = st.slider("廣播-預算佔比%", 0, remaining_global_share, min(70, remaining_global_share), key="fm_share")
+        share = st.slider("預算佔比%", 0, remaining_global_share, min(70, remaining_global_share), key="fm_share")
         remaining_global_share -= share
         sec_shares = {}
         if len(secs) > 1:
@@ -168,57 +186,57 @@ with col_m1:
                 v = st.slider(f"{s}秒佔比", 0, ls, int(ls/2), key=f"fm_s_{s}")
                 sec_shares[s] = v; ls -= v
             sec_shares[secs[-1]] = ls
-            st.info(f"🔹 {secs[-1]}秒: {ls}% (餘額)")
+            st.write(f"🔹 {secs[-1]}秒: {ls}%")
         elif secs: sec_shares[secs[0]] = 100
         fm_data = {"is_national": is_nat, "regions": regs, "seconds": secs, "share": share, "sec_shares": sec_shares}
 
 # 新鮮視
 with col_m2:
-    fv_act = st.checkbox("開啟新鮮視", value=True, key="fv_act")
+    st.markdown("#### 📺 新鮮視")
+    fv_act = st.checkbox("開啟", value=True, key="fv_act")
     fv_data = None
     if fv_act:
-        st.markdown("---")
-        is_nat = st.checkbox("全省聯播", value=False, key="fv_nat")
+        is_nat = st.checkbox("全省聯播 ", value=False, key="fv_nat") # Space added to key to be unique visually if needed, logic key is unique
         regs = ["全省"] if is_nat else st.multiselect("區域", REGIONS_ORDER, default=["北區", "桃竹苗"], key="fv_reg")
         _secs_input = st.multiselect("秒數", DURATIONS, default=[5], key="fv_sec")
         secs = sorted(_secs_input)
         limit = remaining_global_share
         default_val = min(20, limit)
-        share = st.slider("新鮮視-預算佔比%", 0, limit, default_val, key="fv_share")
+        share = st.slider("預算佔比% ", 0, limit, default_val, key="fv_share")
         remaining_global_share -= share
         sec_shares = {}
         if len(secs) > 1:
             st.caption("各秒數佔比")
             ls = 100
             for i, s in enumerate(secs[:-1]):
-                v = st.slider(f"{s}秒佔比", 0, ls, int(ls/2), key=f"fv_s_{s}")
+                v = st.slider(f"{s}秒佔比 ", 0, ls, int(ls/2), key=f"fv_s_{s}")
                 sec_shares[s] = v; ls -= v
             sec_shares[secs[-1]] = ls
-            st.info(f"🔹 {secs[-1]}秒: {ls}% (餘額)")
+            st.write(f"🔹 {secs[-1]}秒: {ls}%")
         elif secs: sec_shares[secs[0]] = 100
         fv_data = {"is_national": is_nat, "regions": regs, "seconds": secs, "share": share, "sec_shares": sec_shares}
 
 # 家樂福
 with col_m3:
-    cf_act = st.checkbox("開啟家樂福", value=True, key="cf_act")
+    st.markdown("#### 🛒 家樂福")
+    cf_act = st.checkbox("開啟", value=True, key="cf_act")
     cf_data = None
     if cf_act:
-        st.markdown("---")
         st.write("區域：全省")
         _secs_input = st.multiselect("秒數", DURATIONS, default=[20], key="cf_sec")
         secs = sorted(_secs_input)
         share = remaining_global_share
-        st.caption(f"家樂福-預算佔比: {share}% (自動填滿)")
+        st.info(f"預算佔比: **{share}%** (自動填滿)")
         st.progress(share / 100.0 if share <= 100 else 1.0)
         sec_shares = {}
         if len(secs) > 1:
             st.caption("各秒數佔比")
             ls = 100
             for i, s in enumerate(secs[:-1]):
-                v = st.slider(f"{s}秒佔比", 0, ls, int(ls/2), key=f"cf_s_{s}")
+                v = st.slider(f"{s}秒佔比  ", 0, ls, int(ls/2), key=f"cf_s_{s}")
                 sec_shares[s] = v; ls -= v
             sec_shares[secs[-1]] = ls
-            st.info(f"🔹 {secs[-1]}秒: {ls}% (餘額)")
+            st.write(f"🔹 {secs[-1]}秒: {ls}%")
         elif secs: sec_shares[secs[0]] = 100
         cf_data = {"regions": ["全省"], "seconds": secs, "share": share, "sec_shares": sec_shares}
 
@@ -227,7 +245,7 @@ if fv_data: config_media["新鮮視"] = fv_data
 if cf_data: config_media["家樂福"] = cf_data
 
 # ==========================================
-# 3. 計算邏輯
+# 3. 計算邏輯 (維持黃金版邏輯)
 # ==========================================
 
 final_rows = []
@@ -275,26 +293,15 @@ if sum(m["share"] for m in config_media.values()) > 0:
                     list_price = db.get(reg, [0,0])[0] if cfg["is_national"] else db[reg][0]
                     rate_val = int(round((list_price / 720.0) * target_spots * discount))
                     
-                    # Real Cost: 單一區域的實際成本 (無論是否打包，都先算出來)
                     real_c = int(round(combined_unit_net * target_spots)) if (not cfg["is_national"] or reg == "北區") else 0
-                    
-                    # Package Cost: 只有在全省打包時，且是第一列才顯示打包價
                     pkg_val_if_nat = int(round(pkg_cost_total)) if (cfg["is_national"] and reg == "北區") else 0
                     
                     prog_name = STORE_COUNTS.get(reg, reg)
                     if m_type == "新鮮視": prog_name = STORE_COUNTS.get(f"新鮮視_{reg}", reg)
                     
-                    # 決定 Package-cost 欄位要顯示什麼
-                    # 邏輯：如果是打包 -> 顯示打包價 (只在第一行)
-                    # 邏輯：如果不是打包 -> 顯示個別區域的 real_cost (其實就是 rate net adjusted)
-                    # 為了方便後續處理，我們在這裡先計算出每個 row 應該顯示的 pkg_display_val
-                    
                     if cfg["is_national"]:
-                         # 打包模式：只有第一列顯示打包價，其他為0
                          pkg_display_val = pkg_val_if_nat
                     else:
-                         # 區域模式：顯示該區域的實際成本 (通常在報價單邏輯下，區域單買的 Rate Net = Package Cost)
-                         # 這裡我們使用 list_price 算出來的 rate_val 作為區域購買的 Package Cost
                          pkg_display_val = rate_val
 
                     final_rows.append({
@@ -303,8 +310,8 @@ if sum(m["share"] for m in config_media.values()) > 0:
                         "program": prog_name, "daypart": "00:00-24:00" if m_type=="全家廣播" else "07:00-22:00",
                         "seconds": sec, "schedule": daily_sch, "spots": target_spots,
                         "rate_net": rate_val, 
-                        "pkg_cost": pkg_val_if_nat, # 這是原始計算的打包價
-                        "pkg_display_val": pkg_display_val, # 這是修正後要顯示在 Excel 的值
+                        "pkg_cost": pkg_val_if_nat,
+                        "pkg_display_val": pkg_display_val,
                         "is_pkg_start": (cfg["is_national"] and reg == "北區"), 
                         "is_pkg_member": cfg["is_national"], 
                         "real_cost": real_c
@@ -341,17 +348,14 @@ if sum(m["share"] for m in config_media.values()) > 0:
                     "real_cost": int(round(unit_sup * target_spots))
                 })
 
-# 【排序邏輯】
 media_order_map = {"全家廣播": 1, "新鮮視": 2, "家樂福": 3}
 final_rows.sort(key=lambda x: media_order_map.get(x['media'], 99))
 
-# 【Product 標題排序】
 def parse_sec_int(s):
     return int(s.replace("秒", ""))
 sorted_secs_list = sorted(list(all_secs), key=parse_sec_int)
 product_str = "、".join(sorted_secs_list)
 
-# 修正 Total 計算邏輯：使用 pkg_display_val 加總，確保與 Excel 欄位一致
 media_total = sum(r["pkg_display_val"] for r in final_rows if not r['is_pkg_member'] or r['is_pkg_start'])
 
 prod_cost = 10000
@@ -409,16 +413,12 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
             tr += f"<td>{r_data['seconds']}秒</td>"
             tr += f"<td class='align-right'>{r_data['rate_net']:,}</td>"
             
-            # 【HTML 顯示邏輯修正】
             if row['is_pkg_start']:
-                # 是打包組的第一列 (顯示打包價)
                 if k == 0:
                     tr += f"<td rowspan='{group_size}' class='align-right'>{row['pkg_display_val']:,}</td>"
             elif row['is_pkg_member']:
-                # 是打包組的其他列 (不顯示，被 rowspan 蓋過)
                 pass
             else:
-                # 獨立購買 (區域或家樂福)，顯示個別價格
                 val = r_data['pkg_display_val']
                 val_str = f"{val:,}"
                 tr += f"<td class='align-right'>{val_str}</td>"
@@ -437,18 +437,18 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
     <div style="overflow-x: auto;">
         <table class="preview-table">
             <tr>
-                <td colspan="5" class="align-left" style="border:none; background-color:#f8f8f8;">
+                <td colspan="5" class="align-left" style="border:none; background-color:#fff;">
                     <b>客戶名稱：</b> {c_name}<br>
                     <b>Product：</b> {products}<br>
                     <b>Period：</b> {start_dt.strftime('%Y. %m. %d')} - {end_date.strftime('%Y. %m. %d')}<br>
                     <b>Medium：</b> {mediums_str}
                 </td>
-                <td colspan="{days_cnt + 3}" style="border:none;"></td>
+                <td colspan="{days_cnt + 3}" style="border:none; background-color:#fff;"></td>
             </tr>
             <tr>
-                <th colspan="7"></th>
+                <th colspan="7" style="border:none;"></th>
                 {date_header_row1}
-                <th></th>
+                <th style="border:none;"></th>
             </tr>
             <tr>
                 <th rowspan="2" class="header-blue">Station</th>
@@ -465,7 +465,7 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
                 {date_header_row3}
             </tr>
             {data_rows_html}
-            <tr>
+            <tr class="row-total">
                 <td colspan="5" class="align-right">Total</td>
                 <td class="align-right">{total_rate_display:,}</td>
                 <td class="align-right">{totals_data['media_total']:,}</td>
@@ -482,7 +482,7 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
                 <td class="align-right">{totals_data['vat']:,}</td>
                 <td colspan="{days_cnt + 1}"></td>
             </tr>
-            <tr>
+            <tr class="row-grand-total">
                 <td colspan="6" class="align-right">Grand Total</td>
                 <td class="align-right">{totals_data['grand_total']:,}</td>
                 <td colspan="{days_cnt + 1}"></td>
@@ -502,15 +502,18 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, totals_data):
 
     fmt_title = workbook.add_format({'font_size': 18, 'bold': True, 'align': 'center'})
     fmt_header_left = workbook.add_format({'align': 'left', 'valign': 'top', 'bold': True})
-    fmt_col_header = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#DDEBF7', 'text_wrap': True, 'font_size': 10})
-    fmt_date_wk = workbook.add_format({'font_size': 9, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#DDEBF7'})
-    fmt_date_we = workbook.add_format({'font_size': 9, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#FFF2CC'}) 
+    fmt_col_header = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#4472C4', 'font_color': 'white', 'text_wrap': True, 'font_size': 10})
+    fmt_date_wk = workbook.add_format({'font_size': 9, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#4472C4', 'font_color': 'white'})
+    fmt_date_we = workbook.add_format({'font_size': 9, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#FFD966'}) 
     
     fmt_cell = workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1, 'font_size': 10})
     fmt_cell_left = workbook.add_format({'align': 'left', 'valign': 'vcenter', 'border': 1, 'font_size': 10, 'text_wrap': True})
     fmt_num = workbook.add_format({'align': 'right', 'valign': 'vcenter', 'border': 1, 'num_format': '#,##0', 'font_size': 10})
     fmt_spots = workbook.add_format({'align': 'center', 'valign': 'vcenter', 'border': 1, 'bold': True, 'bg_color': '#FFF2CC', 'font_size': 10})
     
+    fmt_total = workbook.add_format({'align': 'right', 'valign': 'vcenter', 'border': 1, 'bold': True, 'bg_color': '#E2EFDA', 'num_format': '#,##0', 'font_size': 10})
+    fmt_grand_total = workbook.add_format({'align': 'right', 'valign': 'vcenter', 'border': 1, 'bold': True, 'bg_color': '#548235', 'font_color': 'white', 'num_format': '#,##0', 'font_size': 10})
+
     worksheet.merge_range('A1:AJ1', "Media Schedule", fmt_title)
     
     info = [
@@ -572,7 +575,6 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, totals_data):
             worksheet.write(r_idx, 4, f"{r_data['seconds']}秒", fmt_cell)
             worksheet.write(r_idx, 5, r_data['rate_net'], fmt_num)
             
-            # 【Excel 顯示修正】
             if r_data['is_pkg_start']:
                  if k == 0 and group_size > 1:
                      worksheet.merge_range(current_row, 6, current_row + group_size - 1, 6, r_data['pkg_display_val'], fmt_num)
@@ -589,9 +591,9 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, totals_data):
         current_row += group_size
         i = j
 
-    worksheet.write(current_row, 2, "Total", fmt_cell)
-    worksheet.write(current_row, 5, sum(r['rate_net'] for r in rows), fmt_num)
-    worksheet.write(current_row, 6, totals_data['media_total'], fmt_num)
+    worksheet.write(current_row, 2, "Total", fmt_total)
+    worksheet.write(current_row, 5, sum(r['rate_net'] for r in rows), fmt_total)
+    worksheet.write(current_row, 6, totals_data['media_total'], fmt_total)
     
     total_spots_daily = [0] * days_cnt
     for r in rows:
@@ -599,7 +601,7 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, totals_data):
             total_spots_daily[idx] += val
     for idx, val in enumerate(total_spots_daily):
         worksheet.write(current_row, 7+idx, val, fmt_cell)
-    worksheet.write(current_row, last_col, sum(r['spots'] for r in rows), fmt_cell)
+    worksheet.write(current_row, last_col, sum(r['spots'] for r in rows), fmt_spots)
     
     current_row += 1
     worksheet.write(current_row, 6, "製作", fmt_cell)
@@ -608,8 +610,8 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, totals_data):
     worksheet.write(current_row, 6, "5% VAT", fmt_cell)
     worksheet.write(current_row, 7, totals_data['vat'], fmt_num)
     current_row += 1
-    worksheet.write(current_row, 6, "Grand Total", fmt_cell)
-    worksheet.write(current_row, 7, totals_data['grand_total'], fmt_num)
+    worksheet.write(current_row, 6, "Grand Total", fmt_grand_total)
+    worksheet.write(current_row, 7, totals_data['grand_total'], fmt_grand_total)
 
     worksheet.set_column('A:A', 20)
     worksheet.set_column('B:B', 15)
@@ -635,11 +637,9 @@ st.markdown("### 4. Cue 表網頁預覽")
 if final_rows:
     totals = {"media_total": media_total, "prod_cost": prod_cost, "vat": vat, "grand_total": grand_total}
     
-    # 生成並顯示 HTML
     html_preview = generate_html_preview(final_rows, days_count, start_date, client_name, product_str, totals)
     st.components.v1.html(html_preview, height=600, scrolling=True)
 
-    # 下載按鈕
     xlsx_data = generate_excel(final_rows, days_count, start_date, client_name, product_str, totals)
     
     st.download_button(
