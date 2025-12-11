@@ -130,7 +130,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("媒體 Cue 表生成器 (修正顯示邏輯版)")
+st.title("媒體 Cue 表生成器 (修正金額加總版)")
 
 with st.sidebar:
     st.header("1. 基本資料")
@@ -386,19 +386,18 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
             tr += f"<td>{r_data['seconds']}秒</td>"
             tr += f"<td class='align-right'>{r_data['rate_net']:,}</td>"
             
-            # 【重要修正：Package Cost 欄位顯示邏輯】
-            # 如果是 Package Start (全省廣播的北區)，顯示 pkg_cost
+            # 【HTML 修正：Package Cost 欄位】
             if row['is_pkg_start']:
                 if k == 0:
                     tr += f"<td rowspan='{group_size}' class='align-right'>{row['pkg_cost']:,}</td>"
-            # 如果是 Package Member (全省廣播的其他區)，不顯示
             elif row['is_pkg_member']:
-                pass 
-            # 【修正點】：如果是其他 (新鮮視、家樂福)，顯示 real_cost，確保整欄加總正確
+                # 若是 Package 成員但非 Start，不顯示金額 (會被 rowspan 蓋過)
+                pass
             else:
-                 val = r_data['real_cost']
-                 val_str = f"{val:,}" if val > 0 else ""
-                 tr += f"<td class='align-right'>{val_str}</td>"
+                # 獨立購買 (區域或家樂福)，直接顯示 real_cost
+                val = r_data['real_cost']
+                val_str = f"{val:,}" if val > 0 else ""
+                tr += f"<td class='align-right'>{val_str}</td>"
             
             for s_val in r_data['schedule']:
                 tr += f"<td>{s_val}</td>"
@@ -549,14 +548,13 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, totals_data):
             worksheet.write(r_idx, 4, f"{r_data['seconds']}秒", fmt_cell)
             worksheet.write(r_idx, 5, r_data['rate_net'], fmt_num)
             
-            # 【重要修正】Excel 也要同步：如果是 Package Start 顯示 pkg_cost，如果是獨立項目顯示 real_cost
+            # 【Excel 修正】：若非 Package Member，都要顯示 real_cost (包含廣播/新鮮視的區域單買)
             if r_data['is_pkg_start']:
                  if k == 0 and group_size > 1:
                      worksheet.merge_range(current_row, 6, current_row + group_size - 1, 6, r_data['pkg_cost'], fmt_num)
                  elif k == 0:
                      worksheet.write(r_idx, 6, r_data['pkg_cost'], fmt_num)
             elif not r_data['is_pkg_member']:
-                 # 只要不是 pkg_member (即新鮮視、家樂福)，都顯示 real_cost
                  worksheet.write(r_idx, 6, r_data['real_cost'], fmt_num)
 
             for d_idx, s_val in enumerate(r_data['schedule']):
