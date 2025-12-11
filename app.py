@@ -29,7 +29,7 @@ STORE_COUNTS = {
 REGIONS_ORDER = ["北區", "桃竹苗", "中區", "雲嘉南", "高屏", "東區"]
 DURATIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
 
-# 價格資料庫 (修正：明確定義 Std_Spots)
+# 價格資料庫 (依據 2026 企頻報價)
 PRICING_DB = {
     "全家廣播": {
         "Std_Spots": 480, # 基準檔次 480
@@ -366,12 +366,16 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, totals_dat
             tr += f"<td>{r_data['seconds']}秒</td>"
             tr += f"<td class='align-right'>{r_data['rate_net']:,}</td>"
             
+            # 【HTML 顯示邏輯修正】
             if row['is_pkg_start']:
+                # 是打包組的第一列 (顯示打包價)
                 if k == 0:
                     tr += f"<td rowspan='{group_size}' class='align-right'>{row['pkg_display_val']:,}</td>"
             elif row['is_pkg_member']:
+                # 是打包組的其他列 (不顯示，被 rowspan 蓋過)
                 pass
             else:
+                # 獨立購買 (區域或家樂福)，顯示個別價格
                 val = r_data['pkg_display_val']
                 val_str = f"{val:,}"
                 tr += f"<td class='align-right'>{val_str}</td>"
