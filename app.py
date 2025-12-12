@@ -6,7 +6,7 @@ import xlsxwriter
 from datetime import timedelta, datetime
 
 # ==========================================
-# 1. 基礎資料與設定 (2025/11 最新數據)
+# 1. 基礎資料與設定
 # ==========================================
 
 STORE_COUNTS = {
@@ -36,8 +36,7 @@ PRICING_DB = {
     "全家廣播": {
         "Std_Spots": 480, 
         "Base_Sec": 30,   
-        "Day_Part": "07:00-23:00", # 【修正】時段更新
-        # [List Price, Net Price]
+        "Day_Part": "07:00-23:00",
         "全省": [400000, 320000], 
         "北區": [250000, 200000], "桃竹苗": [150000, 120000],
         "中區": [150000, 120000], "雲嘉南": [100000, 80000], 
@@ -46,7 +45,7 @@ PRICING_DB = {
     "新鮮視": {
         "Std_Spots": 504, 
         "Base_Sec": 10,   
-        "Day_Part": "07:00-23:00", # 【修正】時段更新
+        "Day_Part": "07:00-23:00",
         "全省": [150000, 120000], 
         "北區": [150000, 120000], "桃竹苗": [120000, 96000],
         "中區": [90000, 72000], "雲嘉南": [75000, 60000], 
@@ -54,7 +53,6 @@ PRICING_DB = {
     },
     "家樂福": {
         "Base_Sec": 20,
-        # 家樂福維持原時段
         "量販_全省": {"List": 300000, "Net": 250000, "Std_Spots": 420, "Day_Part": "09:00-23:00"},
         "超市_全省": {"List": 100000, "Net": 80000, "Std_Spots": 720, "Day_Part": "00:00-24:00"} 
     }
@@ -81,7 +79,6 @@ def calculate_schedule(total_spots, days):
     remaining = half_spots % days
     for i in range(remaining): schedule[i] += 1
     final_schedule = [x * 2 for x in schedule]
-    # 補償
     diff = total_spots - sum(final_schedule)
     if diff > 0: final_schedule[0] += diff
     return final_schedule
@@ -91,9 +88,9 @@ def calculate_schedule(total_spots, days):
 # ==========================================
 
 st.set_page_config(layout="wide", page_title="Cue Sheet Generator 2026")
-st.title("📺 媒體 Cue 表生成器 (同仁試用版)")
+st.title("📺 媒體 Cue 表生成器 (動態運算邏輯版)")
 
-# --- 1. 基本資料 (移至主畫面) ---
+# --- 1. 基本資料 ---
 with st.container():
     st.markdown("### 1. 基本資料設定")
     with st.expander("📝 點擊展開/收合基本資料", expanded=True):
@@ -145,7 +142,7 @@ with col_m2:
     if fv_act:
         is_nat = st.checkbox("全省聯播 ", value=False, key="fv_nat")
         regs = ["全省"] if is_nat else st.multiselect("區域", REGIONS_ORDER, default=["北區", "桃竹苗"], key="fv_reg")
-        _secs_input = st.multiselect("秒數", DURATIONS, default=[10], key="fv_sec") # 預設10秒
+        _secs_input = st.multiselect("秒數", DURATIONS, default=[10], key="fv_sec")
         secs = sorted(_secs_input)
         limit = remaining_global_share
         default_val = min(20, limit)
@@ -187,12 +184,13 @@ with col_m3:
         config_media["家樂福"] = {"regions": ["全省"], "seconds": secs, "share": share, "sec_shares": sec_shares}
 
 # ==========================================
-# 3. 計算邏輯
+# 3. 計算邏輯 (含 debug_info 紀錄)
 # ==========================================
 
 final_rows = []
 all_secs = set()
 total_list_price_accum = 0
+debug_logs = [] # 用來存運算過程
 
 if sum(m["share"] for m in config_media.values()) > 0:
     for m_type, cfg in config_media.items():
@@ -205,6 +203,13 @@ if sum(m["share"] for m in config_media.values()) > 0:
             
             factor = get_sec_factor(m_type, sec)
             
+            # --- 記錄變數 ---
+            log_item = {
+                "media": m_type, "sec": sec, "budget": sec_budget, 
+                "status": "OK", "reason": "", "spots": 0, 
+                "std": 0, "factor": factor, "unit_cost": 0
+            }
+
             if m_type in ["全家廣播", "新鮮視"]:
                 db = PRICING_DB[m_type]
                 std_spots = db["Std_Spots"]
@@ -222,6 +227,8 @@ if sum(m["share"] for m in config_media.values()) > 0:
                 if temp_combined_unit_net == 0: continue
                 
                 initial_spots = math.ceil(sec_budget / temp_combined_unit_net)
+                
+                # 達標判斷
                 is_under_target = initial_spots < std_spots
                 multiplier = 1.1 if is_under_target else 1.0
                 
@@ -230,6 +237,17 @@ if sum(m["share"] for m in config_media.values()) > 0:
                 if target_spots % 2 != 0: target_spots += 1 
                 if target_spots == 0: target_spots = 2
                 
+                # 寫入 Log
+                log_item["spots"] = target_spots
+                log_item["std"] = std_spots
+                log_item["unit_cost"] = final_unit_net
+                if is_under_target:
+                    log_item["status"] = "未達標"
+                    log_item["reason"] = f"試算 {initial_spots} < 基準 {std_spots}，觸發 x1.1 加價"
+                else:
+                    log_item["status"] = "達標"
+                    log_item["reason"] = "費率正常"
+
                 daily_sch = calculate_schedule(target_spots, days_count)
                 
                 pkg_cost_total = 0
@@ -239,7 +257,6 @@ if sum(m["share"] for m in config_media.values()) > 0:
 
                 for reg in display_regions:
                     reg_list_total = db.get(reg, [0,0])[0] if cfg["is_national"] else db[reg][0]
-                    # 全家全省分區 Rate 不乘 1.1
                     row_multiplier = 1.0 if (cfg["is_national"] and m_type=="全家廣播") else multiplier
                     rate_list_display = int(round((reg_list_total / std_spots) * target_spots * factor * row_multiplier))
                     
@@ -287,8 +304,18 @@ if sum(m["share"] for m in config_media.values()) > 0:
                 if target_spots % 2 != 0: target_spots += 1
                 if target_spots == 0: target_spots = 2
 
+                # 寫入 Log
+                log_item["spots"] = target_spots
+                log_item["std"] = db["量販_全省"]["Std_Spots"]
+                log_item["unit_cost"] = final_unit_net
+                if is_under_target:
+                    log_item["status"] = "未達標"
+                    log_item["reason"] = f"試算 {initial_spots} < 基準 {db['量販_全省']['Std_Spots']}，觸發 x1.1 加價"
+                else:
+                    log_item["status"] = "達標"
+                    log_item["reason"] = "費率正常"
+
                 sch = calculate_schedule(target_spots, days_count)
-                
                 rate_list_hyp = int(round(unit_list_hyp * target_spots * multiplier))
                 rate_list_sup = int(round(unit_list_sup * target_spots * multiplier))
                 
@@ -306,6 +333,8 @@ if sum(m["share"] for m in config_media.values()) > 0:
                     "rate_list": rate_list_sup, "pkg_display_val": rate_list_sup,
                     "is_pkg_start": False, "is_pkg_member": False
                 })
+            
+            debug_logs.append(log_item)
 
 media_order_map = {"全家廣播": 1, "新鮮視": 2, "家樂福": 3}
 final_rows.sort(key=lambda x: media_order_map.get(x['media'], 99))
@@ -445,7 +474,6 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, total_list, grand
     workbook = xlsxwriter.Workbook(output, {'in_memory': True})
     worksheet = workbook.add_worksheet("Media Schedule")
     
-    # 樣式設定
     fmt_title = workbook.add_format({'font_size': 18, 'bold': True, 'align': 'center'})
     fmt_header_left = workbook.add_format({'align': 'left', 'valign': 'top', 'bold': True})
     fmt_col_header = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#4472C4', 'font_color': 'white', 'text_wrap': True, 'font_size': 10})
@@ -569,24 +597,24 @@ m1.metric("客戶預算 (未稅)", f"{total_budget_input:,}")
 m2.metric("折扣後總金額 (含稅)", f"{grand_total:,}", help="預算 + 製作 + 稅")
 m3.metric("牌價折扣率", discount_ratio_str, delta_color="normal")
 
-with st.expander("💡 系統運算邏輯說明 (試用核對用)"):
+with st.expander("💡 系統運算邏輯說明 (本次試算詳細數據)", expanded=False):
+    st.markdown("#### 1. 本次預算分配 (Waterfall)")
+    for log in debug_logs:
+        status_color = "green" if log["status"]=="達標" else "red"
+        st.markdown(f"""
+        * **{log['media']} ({log['sec']}秒)**: 
+            * 分配預算: `${log['budget']:,.0f}`
+            * 實收單檔成本 (Net/Std × Factor): `${log['unit_cost']:.2f}` (含 {log['factor']}x 係數)
+            * 試算檔次: {log['spots']} 檔
+            * 基準門檻: {log['std']} 檔 -> <span style='color:{status_color}'><b>{log['status']}</b></span> ({log['reason']})
+        """, unsafe_allow_html=True)
+
+    st.markdown("#### 2. 通用規則備註")
     st.markdown("""
-    #### 1. 預算分配 (Waterfall)
-    * **優先順序**：全家廣播 (優先切分) -> 新鮮視 (剩餘切分) -> 家樂福 (餘額全包)。
-    * 確保客戶預算 **100% 使用完畢**，不留尾數。
-
-    #### 2. 檔次計算與秒數折扣
-    * **秒數係數**：
-        * 廣播：30"=1.0, 20"=0.85, 15"=0.65, 10"=0.5
-        * 新鮮視：30"=3.0, 20"=2.0, 15"=1.5, 10"=1.0
-        * 家樂福：30"=1.5, 20"=1.0, 15"=0.85, 10"=0.65
-    * **未達標加價**：若計算檔次 < 基準 (廣播480/新鮮視504)，成本與定價自動 **x 1.1**。
-    * **偶數修正**：所有檔次無條件進位並 **強制轉為偶數**。
-
-    #### 3. 報表金額顯示
-    * **Excel 顯示**：Rate 與 Package-cost 皆顯示 **牌價 (List Price)**。
-    * **Total**：顯示牌價總額。
-    * **實際成交**：直接帶入您的 **專案優惠價 (Budget)** 作為最終收費依據。
+    * **優先順序**：廣播 -> 新鮮視 -> 家樂福 (餘額全包)
+    * **未達標加價**：若計算檔次 < 基準，成本與定價自動 **x 1.1**
+    * **偶數修正**：所有檔次無條件進位並 **強制轉為偶數**
+    * **Excel 顯示**：Rate 與 Package-cost 皆顯示 **牌價 (List Price)**
     """)
 
 st.markdown("### 4. Cue 表網頁預覽")
