@@ -6,7 +6,7 @@ import xlsxwriter
 from datetime import timedelta, datetime
 
 # ==========================================
-# 1. 基礎資料與設定
+# 1. 基礎資料與設定 (2026 新制)
 # ==========================================
 
 STORE_COUNTS = {
@@ -31,11 +31,11 @@ STORE_COUNTS = {
 REGIONS_ORDER = ["北區", "桃竹苗", "中區", "雲嘉南", "高屏", "東區"]
 DURATIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
 
-# --- 價格資料庫 (List=定價, Net=實收價) ---
+# --- 價格資料庫 (List=定價, Net=實收價) 2026版 ---
 PRICING_DB = {
     "全家廣播": {
         "Std_Spots": 480, 
-        "Base_Sec": 30,   
+        "Base_Sec": 30,    
         "Day_Part": "07:00-23:00",
         "全省": [400000, 320000], 
         "北區": [250000, 200000], "桃竹苗": [150000, 120000],
@@ -44,7 +44,7 @@ PRICING_DB = {
     },
     "新鮮視": {
         "Std_Spots": 504, 
-        "Base_Sec": 10,   
+        "Base_Sec": 10,    
         "Day_Part": "07:00-23:00",
         "全省": [150000, 120000], 
         "北區": [150000, 120000], "桃竹苗": [120000, 96000],
@@ -60,9 +60,9 @@ PRICING_DB = {
 
 # --- 秒數折扣係數 ---
 SEC_FACTORS = {
-    "全家廣播": {30: 1.0, 20: 0.85, 15: 0.65, 10: 0.5},
-    "新鮮視":   {30: 3.0, 20: 2.0, 15: 1.5, 10: 1.0},
-    "家樂福":   {30: 1.5, 20: 1.0, 15: 0.85, 10: 0.65}
+    "全家廣播": {30: 1.0, 20: 0.85, 15: 0.65, 10: 0.5, 5: 0.25},
+    "新鮮視":   {30: 3.0, 20: 2.0, 15: 1.5, 10: 1.0, 5: 0.5},
+    "家樂福":   {30: 1.5, 20: 1.0, 15: 0.85, 10: 0.65, 5: 0.35}
 }
 
 def get_sec_factor(media_type, seconds):
@@ -70,25 +70,40 @@ def get_sec_factor(media_type, seconds):
     return factors.get(seconds, 1.0) 
 
 def calculate_schedule(total_spots, days):
-    """ 偶數排程演算法 """
+    """ 
+    偶數排程演算法 (Even Distribution Strategy)
+    1. 將總檔次除以 2 (half_spots)
+    2. 分配 half_spots 到每天
+    3. 將每天的結果乘以 2
+    保證每天都是偶數。
+    """
     if days == 0: return []
+    
+    # 強制總檔次為偶數 (雖然外部已處理，這裡做雙重保險)
+    if total_spots % 2 != 0: total_spots += 1
+        
     half_spots = total_spots // 2
     schedule = [0] * days
+    
+    # 基礎分配 (Base) 與 餘數分配 (Remainder)
     base = half_spots // days
-    for i in range(days): schedule[i] = base
     remaining = half_spots % days
-    for i in range(remaining): schedule[i] += 1
+    
+    for i in range(days):
+        schedule[i] = base
+        if i < remaining:
+            schedule[i] += 1
+            
+    # 還原為偶數
     final_schedule = [x * 2 for x in schedule]
-    diff = total_spots - sum(final_schedule)
-    if diff > 0: final_schedule[0] += diff
     return final_schedule
 
 # ==========================================
 # 2. UI 設定
 # ==========================================
 
-st.set_page_config(layout="wide", page_title="Cue Sheet Generator 2026")
-st.title("📺 媒體 Cue 表生成器 (動態運算邏輯版)")
+st.set_page_config(layout="wide", page_title="Cue Sheet Generator 2026 (v60.4)")
+st.title("📺 媒體 Cue 表生成器 (v60.4 雙偶數排程版)")
 
 # --- 1. 基本資料 ---
 with st.container():
@@ -99,7 +114,7 @@ with st.container():
             client_name = st.text_input("客戶名稱", "萬國通路")
             start_date = st.date_input("開始日", datetime(2025, 1, 1))
         with col_b2:
-            total_budget_input = st.number_input("總預算 (未稅)", value=1000000, step=10000)
+            total_budget_input = st.number_input("總預算 (未稅 Net)", value=1000000, step=10000)
             end_date = st.date_input("結束日", datetime(2025, 1, 31))
         
         days_count = (end_date - start_date).days + 1
@@ -184,13 +199,13 @@ with col_m3:
         config_media["家樂福"] = {"regions": ["全省"], "seconds": secs, "share": share, "sec_shares": sec_shares}
 
 # ==========================================
-# 3. 計算邏輯 (含 debug_info 紀錄)
+# 3. 計算邏輯 (核心引擎 v60.4)
 # ==========================================
 
 final_rows = []
 all_secs = set()
 total_list_price_accum = 0
-debug_logs = [] # 用來存運算過程
+debug_logs = [] 
 
 if sum(m["share"] for m in config_media.values()) > 0:
     for m_type, cfg in config_media.items():
@@ -203,7 +218,6 @@ if sum(m["share"] for m in config_media.values()) > 0:
             
             factor = get_sec_factor(m_type, sec)
             
-            # --- 記錄變數 ---
             log_item = {
                 "media": m_type, "sec": sec, "budget": sec_budget, 
                 "status": "OK", "reason": "", "spots": 0, 
@@ -218,57 +232,47 @@ if sum(m["share"] for m in config_media.values()) > 0:
                 calc_regions = ["全省"] if cfg["is_national"] else cfg["regions"]
                 display_regions = REGIONS_ORDER if cfg["is_national"] else cfg["regions"]
                 
-                temp_combined_unit_net = 0
+                # --- Step 1: 裡子 (Net) 算檔次 ---
+                temp_net_unit_sum = 0
                 for reg in calc_regions:
-                    net_price_total = db[reg][1]
+                    net_price_total = db[reg][1] # 取 Net Price
                     unit_net = (net_price_total / std_spots) * factor
-                    temp_combined_unit_net += unit_net
+                    temp_net_unit_sum += unit_net
                 
-                if temp_combined_unit_net == 0: continue
+                if temp_net_unit_sum == 0: continue
                 
-                initial_spots = math.ceil(sec_budget / temp_combined_unit_net)
-                
-                # 達標判斷
+                # 逆推 + 懲罰 + 偶數修正
+                initial_spots = math.ceil(sec_budget / temp_net_unit_sum)
                 is_under_target = initial_spots < std_spots
                 multiplier = 1.1 if is_under_target else 1.0
                 
-                final_unit_net = temp_combined_unit_net * multiplier
+                final_unit_net = temp_net_unit_sum * multiplier
                 target_spots = math.ceil(sec_budget / final_unit_net)
-                if target_spots % 2 != 0: target_spots += 1 
+                if target_spots % 2 != 0: target_spots += 1 # 強制偶數
                 if target_spots == 0: target_spots = 2
                 
-                # 寫入 Log
                 log_item["spots"] = target_spots
                 log_item["std"] = std_spots
                 log_item["unit_cost"] = final_unit_net
-                if is_under_target:
-                    log_item["status"] = "未達標"
-                    log_item["reason"] = f"試算 {initial_spots} < 基準 {std_spots}，觸發 x1.1 加價"
-                else:
-                    log_item["status"] = "達標"
-                    log_item["reason"] = "費率正常"
+                log_item["status"] = "未達標" if is_under_target else "達標"
+                log_item["reason"] = f"觸發 x1.1" if is_under_target else "費率正常"
 
                 daily_sch = calculate_schedule(target_spots, days_count)
                 
-                pkg_cost_total = 0
-                if cfg["is_national"]:
-                    nat_list_total = db["全省"][0]
-                    pkg_cost_total = (nat_list_total / std_spots) * target_spots * factor * multiplier
-
-                for reg in display_regions:
+                # --- Step 2: 面子 (List) 填報表 ---
+                for i, reg in enumerate(display_regions):
                     reg_list_total = db.get(reg, [0,0])[0] if cfg["is_national"] else db[reg][0]
-                    row_multiplier = 1.0 if (cfg["is_national"] and m_type=="全家廣播") else multiplier
-                    rate_list_display = int(round((reg_list_total / std_spots) * target_spots * factor * row_multiplier))
                     
-                    if cfg["is_national"]:
-                         pkg_display_val = int(round(pkg_cost_total))
-                    else:
-                         pkg_display_val = rate_list_display
-
+                    # 定價單價 (不含懲罰)
+                    rate_list_display = int((reg_list_total / std_spots) * factor)
+                    # 定價總額
+                    pkg_display_val = rate_list_display * target_spots
+                    
                     if not cfg["is_national"]:
                         total_list_price_accum += pkg_display_val
                     elif cfg["is_national"] and reg == "北區":
-                        total_list_price_accum += pkg_display_val
+                        nat_list_total = db["全省"][0]
+                        total_list_price_accum += int((nat_list_total / std_spots) * factor * target_spots)
 
                     prog_name = STORE_COUNTS.get(reg, reg)
                     if m_type == "新鮮視": prog_name = STORE_COUNTS.get(f"新鮮視_{reg}", reg)
@@ -287,50 +291,44 @@ if sum(m["share"] for m in config_media.values()) > 0:
 
             elif m_type == "家樂福":
                 db = PRICING_DB["家樂福"]
-                unit_net_hyp = db["量販_全省"]["Net"] / db["量販_全省"]["Std_Spots"] * factor
-                unit_net_sup = db["超市_全省"]["Net"] / db["超市_全省"]["Std_Spots"] * factor
+                # 1. Net 算檔次
+                base_net = db["量販_全省"]["Net"] # 250,000
+                unit_net = (base_net / 420) * factor
                 
-                unit_list_hyp = db["量販_全省"]["List"] / db["量販_全省"]["Std_Spots"] * factor
-                unit_list_sup = db["超市_全省"]["List"] / db["超市_全省"]["Std_Spots"] * factor
-                
-                combined_net = unit_net_hyp + unit_net_sup
-                
-                initial_spots = math.ceil(sec_budget / combined_net)
-                is_under_target = initial_spots < db["量販_全省"]["Std_Spots"]
+                initial_spots = math.ceil(sec_budget / unit_net)
+                is_under_target = initial_spots < 420
                 multiplier = 1.1 if is_under_target else 1.0
                 
-                final_unit_net = combined_net * multiplier
+                final_unit_net = unit_net * multiplier
                 target_spots = math.ceil(sec_budget / final_unit_net)
                 if target_spots % 2 != 0: target_spots += 1
                 if target_spots == 0: target_spots = 2
 
-                # 寫入 Log
                 log_item["spots"] = target_spots
-                log_item["std"] = db["量販_全省"]["Std_Spots"]
-                log_item["unit_cost"] = final_unit_net
-                if is_under_target:
-                    log_item["status"] = "未達標"
-                    log_item["reason"] = f"試算 {initial_spots} < 基準 {db['量販_全省']['Std_Spots']}，觸發 x1.1 加價"
-                else:
-                    log_item["status"] = "達標"
-                    log_item["reason"] = "費率正常"
+                log_item["status"] = "未達標" if is_under_target else "達標"
 
                 sch = calculate_schedule(target_spots, days_count)
-                rate_list_hyp = int(round(unit_list_hyp * target_spots * multiplier))
-                rate_list_sup = int(round(unit_list_sup * target_spots * multiplier))
                 
-                total_list_price_accum += (rate_list_hyp + rate_list_sup)
+                # 2. List 算顯示
+                base_list = db["量販_全省"]["List"] # 300,000
+                rate_list_display = int((base_list / 420) * factor)
+                pkg_list_display = rate_list_display * target_spots
+                
+                total_list_price_accum += pkg_list_display
                 
                 final_rows.append({
                     "media": "家樂福", "region": "全省量販", "location": "全省量販", "program": STORE_COUNTS["家樂福_量販"],
                     "daypart": db["量販_全省"]["Day_Part"], "seconds": sec, "schedule": sch, "spots": target_spots,
-                    "rate_list": rate_list_hyp, "pkg_display_val": rate_list_hyp,
+                    "rate_list": rate_list_display, "pkg_display_val": pkg_list_display,
                     "is_pkg_start": False, "is_pkg_member": False
                 })
+                
+                spots_s = int(target_spots * (720/420))
+                sch_s = calculate_schedule(spots_s, days_count)
                 final_rows.append({
                     "media": "家樂福", "region": "全省超市", "location": "全省超市", "program": STORE_COUNTS["家樂福_超市"],
-                    "daypart": db["超市_全省"]["Day_Part"], "seconds": sec, "schedule": sch, "spots": target_spots,
-                    "rate_list": rate_list_sup, "pkg_display_val": rate_list_sup,
+                    "daypart": db["超市_全省"]["Day_Part"], "seconds": sec, "schedule": sch_s, "spots": spots_s,
+                    "rate_list": "計量販", "pkg_display_val": "計量販",
                     "is_pkg_start": False, "is_pkg_member": False
                 })
             
@@ -395,17 +393,19 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, total_list
             tr += f"<td>{r_data['program']}</td>"
             tr += f"<td>{r_data['daypart']}</td>"
             tr += f"<td>{r_data['seconds']}秒</td>"
-            tr += f"<td class='align-right'>{r_data['rate_list']:,}</td>"
+            
+            rate_disp = f"{r_data['rate_list']:,}" if isinstance(r_data['rate_list'], int) else r_data['rate_list']
+            tr += f"<td class='align-right'>{rate_disp}</td>"
+            
+            pkg_disp = f"{r_data['pkg_display_val']:,}" if isinstance(r_data['pkg_display_val'], int) else r_data['pkg_display_val']
             
             if row['is_pkg_start']:
                 if k == 0:
-                    tr += f"<td rowspan='{group_size}' class='align-right'>{row['pkg_display_val']:,}</td>"
+                    tr += f"<td rowspan='{group_size}' class='align-right'>{pkg_disp}</td>" 
             elif row['is_pkg_member']:
                 pass
             else:
-                val = r_data['pkg_display_val']
-                val_str = f"{val:,}"
-                tr += f"<td class='align-right'>{val_str}</td>"
+                tr += f"<td class='align-right'>{pkg_disp}</td>"
             
             for s_val in r_data['schedule']:
                 tr += f"<td>{s_val}</td>"
@@ -453,7 +453,7 @@ def generate_html_preview(rows, days_cnt, start_dt, c_name, products, total_list
             {data_rows_html}
             <tr class="row-total">
                 <td colspan="5" class="align-right">Total (List Price)</td>
-                <td class="align-right">{sum(r['rate_list'] for r in rows):,}</td>
+                <td class="align-right">{sum(r['rate_list'] for r in rows if isinstance(r['rate_list'], int)):,}</td>
                 <td class="align-right">{total_list:,}</td>
                 <td colspan="{days_cnt}"></td>
                 <td class="cell-yellow">{sum(r['spots'] for r in rows)}</td>
@@ -535,15 +535,24 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, total_list, grand
             worksheet.write(r_idx, 2, r_data['program'], fmt_cell)
             worksheet.write(r_idx, 3, r_data['daypart'], fmt_cell)
             worksheet.write(r_idx, 4, f"{r_data['seconds']}秒", fmt_cell)
-            worksheet.write(r_idx, 5, r_data['rate_list'], fmt_num)
             
+            # Rate (List)
+            if isinstance(r_data['rate_list'], int):
+                worksheet.write(r_idx, 5, r_data['rate_list'], fmt_num)
+            else:
+                worksheet.write(r_idx, 5, r_data['rate_list'], fmt_cell)
+            
+            # Package (List)
             if r_data['is_pkg_start']:
                  if k == 0 and group_size > 1:
                      worksheet.merge_range(current_row, 6, current_row + group_size - 1, 6, r_data['pkg_display_val'], fmt_num)
                  elif k == 0:
                      worksheet.write(r_idx, 6, r_data['pkg_display_val'], fmt_num)
             elif not r_data['is_pkg_member']:
-                 worksheet.write(r_idx, 6, r_data['pkg_display_val'], fmt_num)
+                 if isinstance(r_data['pkg_display_val'], int):
+                     worksheet.write(r_idx, 6, r_data['pkg_display_val'], fmt_num)
+                 else:
+                     worksheet.write(r_idx, 6, r_data['pkg_display_val'], fmt_cell)
 
             for d_idx, s_val in enumerate(r_data['schedule']):
                 worksheet.write(r_idx, 7 + d_idx, s_val, fmt_cell)
@@ -553,7 +562,7 @@ def generate_excel(rows, days_cnt, start_dt, c_name, products, total_list, grand
         i = j
 
     worksheet.write(current_row, 2, "Total (List Price)", fmt_total)
-    worksheet.write(current_row, 5, sum(r['rate_list'] for r in rows), fmt_total)
+    worksheet.write(current_row, 5, sum(r['rate_list'] for r in rows if isinstance(r['rate_list'], int)), fmt_total)
     worksheet.write(current_row, 6, total_list, fmt_total)
     
     total_spots_daily = [0] * days_cnt
@@ -603,8 +612,8 @@ with st.expander("💡 系統運算邏輯說明 (本次試算詳細數據)", exp
         status_color = "green" if log["status"]=="達標" else "red"
         st.markdown(f"""
         * **{log['media']} ({log['sec']}秒)**: 
-            * 分配預算: `${log['budget']:,.0f}`
-            * 實收單檔成本 (Net/Std × Factor): `${log['unit_cost']:.2f}` (含 {log['factor']}x 係數)
+            * 分配預算 (Net): `${log['budget']:,.0f}`
+            * 實收單檔成本 (Net): `${log['unit_cost']:.2f}` (含 {log['factor']}x 係數)
             * 試算檔次: {log['spots']} 檔
             * 基準門檻: {log['std']} 檔 -> <span style='color:{status_color}'><b>{log['status']}</b></span> ({log['reason']})
         """, unsafe_allow_html=True)
@@ -612,9 +621,9 @@ with st.expander("💡 系統運算邏輯說明 (本次試算詳細數據)", exp
     st.markdown("#### 2. 通用規則備註")
     st.markdown("""
     * **優先順序**：廣播 -> 新鮮視 -> 家樂福 (餘額全包)
-    * **未達標加價**：若計算檔次 < 基準，成本與定價自動 **x 1.1**
-    * **偶數修正**：所有檔次無條件進位並 **強制轉為偶數**
-    * **Excel 顯示**：Rate 與 Package-cost 皆顯示 **牌價 (List Price)**
+    * **運算基礎**：檔次使用 **實收價 (Net)** 逆推，含未達標加價 (x1.1)
+    * **顯示基礎**：報表使用 **定價 (List)** 呈現，以凸顯折扣幅度
+    * **偶數排程**：每日檔次保證為偶數 (Split & Double Strategy)
     """)
 
 st.markdown("### 4. Cue 表網頁預覽")
