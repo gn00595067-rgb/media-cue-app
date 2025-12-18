@@ -3,3 +3,4 @@ pandas
 xlsxwriter
 requests
 openpyxl
+xhtml2pdf
