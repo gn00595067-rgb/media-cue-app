@@ -99,7 +99,7 @@ def calculate_schedule(total_spots, days):
 # ==========================================
 
 st.set_page_config(layout="wide", page_title="Cue Sheet Generator 2026 (v60.5)")
-st.title("📺 媒體 Cue 表生成器 (v60.5 修正家樂福檔次變數)")
+st.title("📺 媒體 Cue 表生成器")
 
 # --- 1. 基本資料 ---
 with st.container():
