@@ -72,20 +72,17 @@ def get_sec_factor(media_type, seconds):
 def calculate_schedule(total_spots, days):
     """ 
     偶數排程演算法 (Even Distribution Strategy)
-    1. 將總檔次除以 2 (half_spots)
-    2. 分配 half_spots 到每天
-    3. 將每天的結果乘以 2
-    保證每天都是偶數。
+    1. 將總檔次除以 2
+    2. 分配到每天
+    3. 結果乘以 2
     """
     if days == 0: return []
     
-    # 強制總檔次為偶數 (雖然外部已處理，這裡做雙重保險)
     if total_spots % 2 != 0: total_spots += 1
         
     half_spots = total_spots // 2
     schedule = [0] * days
     
-    # 基礎分配 (Base) 與 餘數分配 (Remainder)
     base = half_spots // days
     remaining = half_spots % days
     
@@ -94,7 +91,6 @@ def calculate_schedule(total_spots, days):
         if i < remaining:
             schedule[i] += 1
             
-    # 還原為偶數
     final_schedule = [x * 2 for x in schedule]
     return final_schedule
 
@@ -102,8 +98,8 @@ def calculate_schedule(total_spots, days):
 # 2. UI 設定
 # ==========================================
 
-st.set_page_config(layout="wide", page_title="Cue Sheet Generator 2026 (v60.4)")
-st.title("📺 媒體 Cue 表生成器 (v60.4 雙偶數排程版)")
+st.set_page_config(layout="wide", page_title="Cue Sheet Generator 2026 (v60.5)")
+st.title("📺 媒體 Cue 表生成器 (v60.5 修正家樂福檔次變數)")
 
 # --- 1. 基本資料 ---
 with st.container():
@@ -199,7 +195,7 @@ with col_m3:
         config_media["家樂福"] = {"regions": ["全省"], "seconds": secs, "share": share, "sec_shares": sec_shares}
 
 # ==========================================
-# 3. 計算邏輯 (核心引擎 v60.4)
+# 3. 計算邏輯 (核心引擎 v60.5)
 # ==========================================
 
 final_rows = []
@@ -248,7 +244,7 @@ if sum(m["share"] for m in config_media.values()) > 0:
                 
                 final_unit_net = temp_net_unit_sum * multiplier
                 target_spots = math.ceil(sec_budget / final_unit_net)
-                if target_spots % 2 != 0: target_spots += 1 # 強制偶數
+                if target_spots % 2 != 0: target_spots += 1 
                 if target_spots == 0: target_spots = 2
                 
                 log_item["spots"] = target_spots
@@ -263,9 +259,7 @@ if sum(m["share"] for m in config_media.values()) > 0:
                 for i, reg in enumerate(display_regions):
                     reg_list_total = db.get(reg, [0,0])[0] if cfg["is_national"] else db[reg][0]
                     
-                    # 定價單價 (不含懲罰)
                     rate_list_display = int((reg_list_total / std_spots) * factor)
-                    # 定價總額
                     pkg_display_val = rate_list_display * target_spots
                     
                     if not cfg["is_national"]:
@@ -291,12 +285,16 @@ if sum(m["share"] for m in config_media.values()) > 0:
 
             elif m_type == "家樂福":
                 db = PRICING_DB["家樂福"]
-                # 1. Net 算檔次
-                base_net = db["量販_全省"]["Net"] # 250,000
-                unit_net = (base_net / 420) * factor
+                
+                # [FIX] 使用 DB 中的基準檔次，不再寫死 420/720
+                base_std_spots = db["量販_全省"]["Std_Spots"]
+                sup_std_spots = db["超市_全省"]["Std_Spots"]
+                
+                base_net = db["量販_全省"]["Net"] 
+                unit_net = (base_net / base_std_spots) * factor
                 
                 initial_spots = math.ceil(sec_budget / unit_net)
-                is_under_target = initial_spots < 420
+                is_under_target = initial_spots < base_std_spots
                 multiplier = 1.1 if is_under_target else 1.0
                 
                 final_unit_net = unit_net * multiplier
@@ -305,13 +303,16 @@ if sum(m["share"] for m in config_media.values()) > 0:
                 if target_spots == 0: target_spots = 2
 
                 log_item["spots"] = target_spots
+                log_item["std"] = base_std_spots
+                log_item["unit_cost"] = final_unit_net
                 log_item["status"] = "未達標" if is_under_target else "達標"
+                log_item["reason"] = f"觸發 x1.1" if is_under_target else "正常"
 
                 sch = calculate_schedule(target_spots, days_count)
                 
-                # 2. List 算顯示
-                base_list = db["量販_全省"]["List"] # 300,000
-                rate_list_display = int((base_list / 420) * factor)
+                # List 顯示
+                base_list = db["量販_全省"]["List"]
+                rate_list_display = int((base_list / base_std_spots) * factor)
                 pkg_list_display = rate_list_display * target_spots
                 
                 total_list_price_accum += pkg_list_display
@@ -323,7 +324,7 @@ if sum(m["share"] for m in config_media.values()) > 0:
                     "is_pkg_start": False, "is_pkg_member": False
                 })
                 
-                spots_s = int(target_spots * (720/420))
+                spots_s = int(target_spots * (sup_std_spots / base_std_spots))
                 sch_s = calculate_schedule(spots_s, days_count)
                 final_rows.append({
                     "media": "家樂福", "region": "全省超市", "location": "全省超市", "program": STORE_COUNTS["家樂福_超市"],
@@ -612,8 +613,8 @@ with st.expander("💡 系統運算邏輯說明 (本次試算詳細數據)", exp
         status_color = "green" if log["status"]=="達標" else "red"
         st.markdown(f"""
         * **{log['media']} ({log['sec']}秒)**: 
-            * 分配預算 (Net): `${log['budget']:,.0f}`
-            * 實收單檔成本 (Net): `${log['unit_cost']:.2f}` (含 {log['factor']}x 係數)
+            * 分配預算: `${log['budget']:,.0f}`
+            * 實收單檔成本 (Net/Std × Factor): `${log['unit_cost']:.2f}` (含 {log['factor']}x 係數)
             * 試算檔次: {log['spots']} 檔
             * 基準門檻: {log['std']} 檔 -> <span style='color:{status_color}'><b>{log['status']}</b></span> ({log['reason']})
         """, unsafe_allow_html=True)
@@ -621,9 +622,9 @@ with st.expander("💡 系統運算邏輯說明 (本次試算詳細數據)", exp
     st.markdown("#### 2. 通用規則備註")
     st.markdown("""
     * **優先順序**：廣播 -> 新鮮視 -> 家樂福 (餘額全包)
-    * **運算基礎**：檔次使用 **實收價 (Net)** 逆推，含未達標加價 (x1.1)
-    * **顯示基礎**：報表使用 **定價 (List)** 呈現，以凸顯折扣幅度
-    * **偶數排程**：每日檔次保證為偶數 (Split & Double Strategy)
+    * **未達標加價**：若計算檔次 < 基準，成本(Net) 自動 **x 1.1**
+    * **偶數修正**：所有檔次無條件進位並 **強制轉為偶數**
+    * **Excel 顯示**：Rate 與 Package-cost 皆顯示 **牌價 (List Price)** 以凸顯折扣
     """)
 
 st.markdown("### 4. Cue 表網頁預覽")
